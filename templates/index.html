@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Excel → PDF 変換ツール</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<style></style>
+</head>
+<body>
+
+<div class="layout">
+  <!-- ── サイドバー ── -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1>Excel → PDF</h1>
+      <p>データを編集してPDFに書き出す</p>
+    </div>
+
+    <div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
+      <div class="icon">📂</div>
+      <strong>Excelを読み込む</strong>
+      <p>クリックまたはドラッグ＆ドロップ</p>
+      <p style="margin-top:4px;font-size:11px;">.xlsx / .xls</p>
+    </div>
+    <input type="file" id="file-input" accept=".xlsx,.xls">
+
+    <div class="sheet-list" id="sheet-list">
+      <h3>シート</h3>
+      <p style="font-size:12px;color:var(--text-muted);padding:4px 6px;">ファイルを読み込んでください</p>
+    </div>
+
+    <div class="sidebar-footer">
+      <label>PDFタイトル</label>
+      <input type="text" id="pdf-title" placeholder="タイトルを入力" value="レポート">
+    </div>
+  </aside>
+
+  <!-- ── メインエリア ── -->
+  <div class="main">
+    <!-- ツールバー -->
+    <div class="toolbar">
+      <div class="spacer-h"></div>
+      <button class="btn primary" onclick="generatePDF()">⬇ PDF書き出し＆プレビュー</button>
+    </div>
+
+    <!-- エディタ -->
+    <div class="editor" id="editor">
+      <div class="empty-state" id="empty-state">
+        <div class="icon">📄</div>
+        <p>Excelを読み込むか、ブロックを追加してください<br>
+        <span style="font-size:12px;opacity:.7">「教員プロフィール」で画像レイアウトを作成できます</span></p>
+      </div>
+    </div>
+
+    <!-- ステータスバー -->
+    <div class="statusbar">
+      <span id="status-blocks">ブロック: 0</span>
+      <span id="status-msg"></span>
+    </div>
+  </div>
+
+  <!-- ── PDFプレビューパネル ── -->
+  <div class="preview-panel">
+    <div class="preview-header">
+      <span>PDF プレビュー</span>
+      <div class="preview-actions">
+        <button class="preview-btn" onclick="downloadPDF()" id="dl-btn" disabled>ダウンロード</button>
+      </div>
+    </div>
+    <div class="preview-content">
+      <div class="preview-placeholder" id="preview-placeholder">
+        <div class="ph-icon">📋</div>
+        <p>「PDF書き出し＆プレビュー」<br>ボタンを押すとここに<br>プレビューが表示されます</p>
+      </div>
+      <iframe id="pdf-iframe" style="display:none"></iframe>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── 状態 ─────────────────────────────────────────────────────────────────────
+let blocks = [];
+let nextId = 1;
+let sheetData = {};
+let currentPdfBlob = null;
+
+// ── ユーティリティ ────────────────────────────────────────────────────────────
+function uid() { return nextId++; }
+
+function toast(msg, err = false) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.background = err ? '#EF4444' : '#4F46E5';
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+function updateStatus() {
+  document.getElementById('status-blocks').textContent = `ブロック: ${blocks.length}`;
+}
+
+function showEmpty() {
+  const es = document.getElementById('empty-state');
+  es.style.display = blocks.length === 0 ? 'flex' : 'none';
+}
+
+// ── ファイルアップロード ───────────────────────────────────────────────────────
+const uploadArea = document.getElementById('upload-area');
+const fileInput  = document.getElementById('file-input');
+
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('drag'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag'));
+uploadArea.addEventListener('drop', e => {
+  e.preventDefault(); uploadArea.classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+
+async function handleFile(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  document.getElementById('status-msg').innerHTML = '<span>読み込み中…</span>';
+  try {
+    const res = await fetch('/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.error) { toast(data.error, true); return; }
+    sheetData = data.sheets;
+    renderSheetList(data.sheetNames);
+    // 全シートを自動でプロフィールとして読み込む
+    data.sheetNames.forEach(name => importAllColumnsAsProfile(name));
+    toast(`✓ ${file.name} を読み込みました`);
+    document.getElementById('status-msg').innerHTML = `<span class="ok">✓ ${file.name}</span>`;
+  } catch(e) {
+    toast('サーバーエラー', true);
+    document.getElementById('status-msg').innerHTML = `<span class="err">エラー</span>`;
+  }
+}
+
+function renderSheetList(names) {
+  const el = document.getElementById('sheet-list');
+  el.innerHTML = '<h3>読み込み済みシート</h3>';
+  names.forEach(name => {
+    const div = document.createElement('div');
+    div.style.cssText = 'padding:5px 8px;font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:6px;';
+    div.innerHTML = `<span style="font-size:14px">📄</span>${name}`;
+    el.appendChild(div);
+  });
+}
+
+// ── Excel多列読み込み（1列=1教員）───────────────────────────────────────────────
+function importAllColumnsAsProfile(name) {
+  const rows = sheetData[name];
+  if (!rows || rows.length === 0) return;
+
+  let maxCols = 0;
+  rows.forEach(row => { if (row) maxCols = Math.max(maxCols, row.length); });
+
+  let count = 0;
+  for (let col = 1; col < maxCols; col++) {
+    const hasData = rows.some(row => row && row[col] && String(row[col]).trim());
+    if (!hasData) continue;
+    const pairs = rows.map(row => [
+      row ? String(row[0] || '').trim() : '',
+      row ? String(row[col] || '').trim() : ''
+    ]);
+    const p = buildProfileFromPairs(pairs);
+    addBlock('profile', p);
+    count++;
+  }
+  if (count > 0) toast(`✓「${name}」から ${count} 件のプロフィールを読み込みました`);
+  else toast(`「${name}」: B列以降にデータが見つかりませんでした`, true);
+}
+
+// ── Excelデータ([label, value]ペア配列)→プロフィールオブジェクト ─────────────────
+function normalizeKey(str) {
+  return String(str)
+    .replace(/　/g, ' ').replace(/[\s\u00A0]/g, '')
+    .replace(/（[^）]*）/g, '').replace(/\([^)]*\)/g, '')
+    .toLowerCase();
+}
+function anyMatch(key, patterns) {
+  return patterns.some(p => key.includes(p));
+}
+
+function buildProfileFromPairs(pairs) {
+  const p = {
+    catchcopy: '', nameJa: '', nameEn: '',
+    keywords: '', fieldName: '', email: '', emailLabel: 'email',
+    position: '', degree: '', pageNum: '',
+    facePhoto: null, researchImages: [],
+    sections: [
+      { heading: '研究分野',                          content: '' },
+      { heading: '興味のあること・技術PR',             content: '' },
+      { heading: '特別設備',                          content: '' },
+      { heading: '企業との連携実績',                   content: '' },
+      { heading: 'つながりたい分野（産業界、自治体）',  content: '' },
+    ]
+  };
+
+  let currentSectionIdx = -1;
+  const appendSection = (idx, val) => {
+    if (!val) return;
+    p.sections[idx].content = p.sections[idx].content
+      ? p.sections[idx].content + '\n' + val : val;
+  };
+
+  pairs.forEach(([rawA, rawB]) => {
+    const val = rawB;
+    if (!rawA) {
+      if (currentSectionIdx >= 0 && val) appendSection(currentSectionIdx, val);
+      return;
+    }
+    const key = normalizeKey(rawA);
+
+    if (key.includes('研究分野') && !key.includes('分野等')) {
+      currentSectionIdx = 0; appendSection(0, val);
+    } else if (anyMatch(key, ['興味', '技術pr', '技術ｐｒ'])) {
+      currentSectionIdx = 1; appendSection(1, val);
+    } else if (anyMatch(key, ['特別設備', '設備'])) {
+      currentSectionIdx = 2; appendSection(2, val);
+    } else if (anyMatch(key, ['企業', '連携実績', '連携'])) {
+      currentSectionIdx = 3; appendSection(3, val);
+    } else if (anyMatch(key, ['つながり', '産業界'])) {
+      currentSectionIdx = 4; appendSection(4, val);
+    } else if (anyMatch(key, ['英語氏名', '英名', 'ローマ字', 'nameen'])) {
+      p.nameEn = val; currentSectionIdx = -1;
+    } else if (anyMatch(key, ['分野等', '専門分野英', 'fieldenglish', 'field'])) {
+      p.fieldName = val; currentSectionIdx = -1;
+    } else if (anyMatch(key, ['email', 'mail', 'メール', 'メールアドレス'])) {
+      p.email = val; currentSectionIdx = -1;
+    } else if (anyMatch(key, ['職名', '役職', 'position'])) {
+      p.position = val; currentSectionIdx = -1;
+    } else if (anyMatch(key, ['学位', 'degree'])) {
+      p.degree = val; currentSectionIdx = -1;
+    } else if (anyMatch(key, ['キーワード', 'keyword'])) {
+      p.keywords = val; currentSectionIdx = -1;
+    } else if (anyMatch(key, ['キャッチコピー', 'catchcopy', 'キャッチ', 'タイトル', '研究テーマ', '研究題目'])) {
+      p.catchcopy = val; currentSectionIdx = -1;
+    } else if (anyMatch(key, ['ページ番号', 'pagenum', 'ページno', 'pageno', 'ページ数'])) {
+      p.pageNum = val; currentSectionIdx = -1;
+    } else if (anyMatch(key, ['氏名', '名前', '教員名'])) {
+      if (/[ぁ-ん\u30A0-\u30FF\u4E00-\u9FFF]/.test(val)) p.nameJa = val;
+      else if (val) p.nameEn = val;
+      currentSectionIdx = -1;
+    } else {
+      if (currentSectionIdx >= 0 && val) appendSection(currentSectionIdx, val);
+      else currentSectionIdx = -1;
+    }
+  });
+  return p;
+}
+
+// ── ブロック追加 ──────────────────────────────────────────────────────────────
+function addBlock(type, extra = {}) {
+  const id = uid();
+  let block = { id, type, ...extra };
+
+  if (type === 'heading' && !block.content) block.content = '見出し';
+  if (type === 'text'    && !block.content) block.content = 'テキストを入力...';
+  if (type === 'table'   && !block.rows)    block.rows = [['列1','列2','列3'],['','',''],['','','']];
+  if (type === 'table'   && block.hasHeader === undefined) block.hasHeader = true;
+  if (type === 'profile') {
+    block.catchcopy  = block.catchcopy  || 'キャッチコピーを入力';
+    block.nameEn     = block.nameEn     || 'LAST, Firstname';
+    block.nameJa     = block.nameJa     || '氏名 氏名';
+    block.keywords   = block.keywords   || 'キーワード1 / キーワード2 / キーワード3';
+    block.fieldName  = block.fieldName  || '研究分野（英語）';
+    block.email      = block.email      || 'email@example.ac.jp';
+    block.emailLabel = block.emailLabel || 'email';
+    block.position   = block.position   || '教授';
+    block.degree     = block.degree     || '博士（工学）';
+    block.pageNum    = block.pageNum    || '';
+    block.facePhoto  = block.facePhoto  || null;
+    block.researchImages = block.researchImages || [];
+    block.sections   = block.sections   || [
+      { heading: '研究分野', content: '' },
+      { heading: '興味のあること・技術PR', content: '' },
+      { heading: '特別設備', content: '' },
+      { heading: '企業との連携実績', content: '' },
+      { heading: 'つながりたい分野（産業界、自治体）', content: '' },
+    ];
+  }
+
+  blocks.push(block);
+  renderBlock(block);
+  updateStatus();
+  showEmpty();
+}
+
+// ── ブロック描画 ──────────────────────────────────────────────────────────────
+function renderBlock(block) {
+  const editor = document.getElementById('editor');
+  const wrap = document.createElement('div');
+  wrap.className = 'block';
+  wrap.dataset.id = block.id;
+  wrap.innerHTML = buildBlockHTML(block);
+  editor.appendChild(wrap);
+  bindBlockEvents(wrap, block);
+}
+
+const TYPE_LABEL = { heading: '見出し', text: 'テキスト', table: 'テーブル', spacer: '区切り', profile: '教員プロフィール' };
+
+function buildBlockHTML(block) {
+  const label = block.label ? ` — ${block.label}` : '';
+  const isProfile = block.type === 'profile';
+  const headerBg = isProfile ? 'background:var(--accent-light)' : '';
+  const badgeColor = isProfile ? 'color:var(--accent)' : '';
+  const badgeText = (block.type === 'profile')
+    ? esc(block.nameJa || '教員プロフィール')
+    : (TYPE_LABEL[block.type] || block.type);
+  const header = `
+    <div class="block-header" style="${headerBg}">
+      <span class="block-type-badge" id="block-badge-${block.id}" style="${badgeColor}">${badgeText}${label}</span>
+      <div class="block-actions">
+        <button class="icon-btn" title="上へ" onclick="moveBlock(${block.id},-1)">↑</button>
+        <button class="icon-btn" title="下へ" onclick="moveBlock(${block.id}, 1)">↓</button>
+        <button class="icon-btn red" title="削除" onclick="deleteBlock(${block.id})">✕</button>
+      </div>
+    </div>`;
+
+  let body = '';
+  if (block.type === 'heading') {
+    body = `<div class="block-body"><input class="heading-input" value="${esc(block.content)}"
+              oninput="updateBlock(${block.id},'content',this.value)" placeholder="見出しを入力"></div>`;
+  } else if (block.type === 'text') {
+    body = `<div class="block-body"><textarea class="text-input"
+              oninput="updateBlock(${block.id},'content',this.value)">${esc(block.content)}</textarea></div>`;
+  } else if (block.type === 'table') {
+    body = `<div class="block-body">${buildTableEditor(block)}</div>`;
+  } else if (block.type === 'spacer') {
+    body = `<div class="block-body" style="text-align:center;color:var(--text-muted);font-size:12px;padding:6px">— 区切り —</div>`;
+  } else if (block.type === 'profile') {
+    body = `<div class="block-body">${buildProfileEditor(block)}</div>`;
+  }
+  return header + body;
+}
+
+function buildProfileEditor(block) {
+  const id = block.id;
+  let sectionsHtml = '';
+  (block.sections || []).forEach((sec, i) => {
+    sectionsHtml += `
+      <div class="profile-field">
+        <label>${esc(sec.heading)}</label>
+        <textarea class="profile-textarea" placeholder="内容を入力..."
+          oninput="updateSection(${id},${i},this.value)">${esc(sec.content)}</textarea>
+      </div>`;
+  });
+
+  const faceThumb = block.facePhoto
+    ? `<div class="face-img-wrap">
+         <img src="${block.facePhoto}" class="face-thumb">
+         <button class="face-del-overlay" onclick="deleteFacePhoto(${id})" title="削除">✕</button>
+       </div>`
+    : '';
+  const researchThumbs = (block.researchImages || []).map((r, i) =>
+    `<div class="research-item">
+      <div class="research-img-wrap">
+        <img src="${esc(r.data || '')}">
+        <button class="research-del-btn" onclick="deleteResearchImage(${id},${i})" title="削除">✕</button>
+      </div>
+      <textarea class="research-cap-input"
+        oninput="updateResearchCaption(${id},${i},this.value)"
+        placeholder="キャプションを入力">${esc(r.name)}</textarea>
+    </div>`
+  ).join('');
+
+  return `<div class="profile-editor">
+    <div class="profile-section-header">基本情報</div>
+    <div class="profile-field" style="max-width:120px">
+      <label>ページ番号</label>
+      <input class="profile-input" type="number" min="1" value="${esc(block.pageNum || '')}"
+        oninput="updateBlock(${id},'pageNum',this.value)" placeholder="例：1">
+    </div>
+    <div class="profile-row">
+      <div class="profile-field">
+        <label>氏名（日本語）</label>
+        <input class="profile-input" value="${esc(block.nameJa)}"
+          oninput="updateBlock(${id},'nameJa',this.value)" placeholder="例：青柳 成俊">
+      </div>
+      <div class="profile-field">
+        <label>氏名（英語）</label>
+        <input class="profile-input" value="${esc(block.nameEn)}"
+          oninput="updateBlock(${id},'nameEn',this.value)" placeholder="例：AOYAGI, Naritoshi">
+      </div>
+    </div>
+    <div class="profile-row">
+      <div class="profile-field">
+        <label>職名</label>
+        <input class="profile-input" value="${esc(block.position)}"
+          oninput="updateBlock(${id},'position',this.value)" placeholder="例：特任教授">
+      </div>
+      <div class="profile-field">
+        <label>学位</label>
+        <input class="profile-input" value="${esc(block.degree)}"
+          oninput="updateBlock(${id},'degree',this.value)" placeholder="例：博士（工学）">
+      </div>
+    </div>
+    <div class="profile-field">
+      <label>キャッチコピー</label>
+      <input class="profile-input" value="${esc(block.catchcopy)}"
+        oninput="updateBlock(${id},'catchcopy',this.value)" placeholder="例：マルチマテリアルと技術 - 和紙から金属・セラミックスまで">
+    </div>
+    <div class="profile-field">
+      <label>キーワード</label>
+      <input class="profile-input" value="${esc(block.keywords)}"
+        oninput="updateBlock(${id},'keywords',this.value)" placeholder="例：材料組織 / 材料特性の評価 / 焼結プロセス">
+    </div>
+    <div class="profile-row">
+      <div class="profile-field">
+        <label>分野等（英語）</label>
+        <input class="profile-input" value="${esc(block.fieldName)}"
+          oninput="updateBlock(${id},'fieldName',this.value)" placeholder="例：Materials Science and Engineering">
+      </div>
+      <div class="profile-field">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <label style="margin-bottom:0">ラベル表記</label>
+          <select class="email-label-select" onchange="updateBlock(${id},'emailLabel',this.value)">
+            <option value="email"     ${block.emailLabel==='email'     ?'selected':''}>email</option>
+            <option value="email/URL" ${block.emailLabel==='email/URL' ?'selected':''}>email/URL</option>
+            <option value="URL"       ${block.emailLabel==='URL'       ?'selected':''}>URL</option>
+          </select>
+        </div>
+        <input class="profile-input" value="${esc(block.email)}"
+          oninput="updateBlock(${id},'email',this.value)" placeholder="例：name@university.ac.jp">
+      </div>
+    </div>
+    <div class="profile-section-header">各セクション</div>
+    ${sectionsHtml}
+    <div class="profile-section-header">写真</div>
+    <div class="photo-section">
+      <div class="photo-upload-box">
+        <label>顔写真を読み込む</label>
+        <label class="photo-upload-btn" for="face-file-${id}">📷 ファイルを追加</label>
+        <input id="face-file-${id}" class="photo-file-input" type="file" accept="image/*"
+          onchange="loadFacePhoto(${id}, this)">
+        <div id="face-ph-${id}">${faceThumb}</div>
+      </div>
+      <div class="photo-upload-box">
+        <label>研究画像を読み込む（複数可）</label>
+        <label class="photo-upload-btn" for="research-file-${id}">🖼 ファイルを追加</label>
+        <input id="research-file-${id}" class="photo-file-input" type="file" accept="image/*" multiple
+          onchange="loadResearchImages(${id}, this)">
+        <div id="research-ph-${id}" class="research-grid">${researchThumbs}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function buildTableEditor(block) {
+  const rows = block.rows;
+  const id   = block.id;
+  const colCount = rows[0] ? rows[0].length : 0;
+
+  let html = `<div class="table-toolbar">
+    <label><input type="checkbox" ${block.hasHeader ? 'checked' : ''}
+      onchange="updateBlock(${id},'hasHeader',this.checked);rerenderBlock(${id})"> ヘッダー行あり</label>
+    <button class="btn" onclick="addTableRow(${id})" style="padding:4px 10px;font-size:11px">+ 行</button>
+    <button class="btn" onclick="addTableCol(${id})" style="padding:4px 10px;font-size:11px">+ 列</button>
+  </div><div class="table-scroll"><table class="edit-table"><thead><tr>`;
+
+  for (let c = 0; c < colCount; c++) {
+    html += `<th><button class="col-del-btn" onclick="deleteTableCol(${id},${c})">✕ 列${c+1}削除</button></th>`;
+  }
+  html += `<th></th></tr>`;
+
+  rows.forEach((row, r) => {
+    const tag = (block.hasHeader && r === 0) ? 'th' : 'td';
+    html += '<tr>';
+    for (let c = 0; c < colCount; c++) {
+      const val = row[c] !== undefined ? row[c] : '';
+      html += `<${tag}><input class="cell-input" value="${esc(String(val))}"
+                  oninput="updateCell(${id},${r},${c},this.value)"></${tag}>`;
+    }
+    html += `<td><button class="row-del-btn" onclick="deleteTableRow(${id},${r})">✕</button></td></tr>`;
+  });
+  html += '</thead></table></div>';
+  return html;
+}
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── ブロック操作 ──────────────────────────────────────────────────────────────
+function updateBlock(id, key, val) {
+  const b = blocks.find(b => b.id === id);
+  if (!b) return;
+  b[key] = val;
+  // プロフィールブロックのバッジ名を氏名（日本語）に同期
+  if (key === 'nameJa' && b.type === 'profile') {
+    const badge = document.getElementById(`block-badge-${id}`);
+    if (badge) badge.textContent = val || '教員プロフィール';
+  }
+}
+
+function updateSection(id, idx, val) {
+  const b = blocks.find(b => b.id === id);
+  if (b && b.sections && b.sections[idx]) b.sections[idx].content = val;
+}
+
+function updateCell(id, r, c, val) {
+  const b = blocks.find(b => b.id === id);
+  if (b && b.rows[r]) b.rows[r][c] = val;
+}
+
+function addTableRow(id) {
+  const b = blocks.find(b => b.id === id);
+  if (!b) return;
+  const colCount = b.rows[0] ? b.rows[0].length : 3;
+  b.rows.push(Array(colCount).fill(''));
+  rerenderBlock(id);
+}
+
+function addTableCol(id) {
+  const b = blocks.find(b => b.id === id);
+  if (!b) return;
+  b.rows.forEach(r => r.push(''));
+  rerenderBlock(id);
+}
+
+function deleteTableRow(id, r) {
+  const b = blocks.find(b => b.id === id);
+  if (!b || b.rows.length <= 1) return;
+  b.rows.splice(r, 1);
+  rerenderBlock(id);
+}
+
+function deleteTableCol(id, c) {
+  const b = blocks.find(b => b.id === id);
+  if (!b) return;
+  b.rows.forEach(r => r.splice(c, 1));
+  rerenderBlock(id);
+}
+
+function rerenderBlock(id) {
+  const b = blocks.find(b => b.id === id);
+  const el = document.querySelector(`[data-id="${id}"]`);
+  if (!b || !el) return;
+  el.innerHTML = buildBlockHTML(b);
+  bindBlockEvents(el, b);
+}
+
+function deleteBlock(id) {
+  blocks = blocks.filter(b => b.id !== id);
+  const el = document.querySelector(`[data-id="${id}"]`);
+  if (el) el.remove();
+  updateStatus();
+  showEmpty();
+}
+
+function moveBlock(id, dir) {
+  const idx = blocks.findIndex(b => b.id === id);
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= blocks.length) return;
+  [blocks[idx], blocks[newIdx]] = [blocks[newIdx], blocks[idx]];
+  rebuildEditor();
+}
+
+function rebuildEditor() {
+  const editor = document.getElementById('editor');
+  const existing = [...editor.querySelectorAll('.block')];
+  existing.forEach(e => e.remove());
+  blocks.forEach(b => renderBlock(b));
+  updateStatus();
+  showEmpty();
+}
+
+// ── ドラッグ＆ドロップ並び替え ────────────────────────────────────────────────
+function bindBlockEvents(el, block) {
+  // ドラッグ＆ドロップは使用しない（↑↓ボタンで並び替え）
+}
+
+// ── 写真読み込み ──────────────────────────────────────────────────────────────
+function loadFacePhoto(id, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    updateBlock(id, 'facePhoto', e.target.result);
+    const el = document.getElementById(`face-ph-${id}`);
+    if (el) el.innerHTML = `<div class="face-img-wrap">
+      <img src="${e.target.result}" class="face-thumb">
+      <button class="face-del-overlay" onclick="deleteFacePhoto(${id})" title="削除">✕</button>
+    </div>`;
+  };
+  reader.readAsDataURL(file);
+}
+
+function loadResearchImages(id, input) {
+  const files = Array.from(input.files);
+  if (files.length === 0) return;
+  const b = blocks.find(b => b.id === id);
+  if (!b) return;
+
+  // 既存画像の末尾に追加（置き換えではなく蓄積）
+  const startIdx = b.researchImages.length;
+  files.forEach(f => {
+    b.researchImages.push({ data: null, name: f.name.replace(/\.[^.]+$/, '') });
+  });
+
+  let done = 0;
+  files.forEach((file, i) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      b.researchImages[startIdx + i].data = e.target.result;
+      done++;
+      if (done === files.length) rerenderBlock(id); // 全件完了後に再描画
+    };
+    reader.readAsDataURL(file);
+  });
+  // inputをリセットして同じファイルも再選択できるようにする
+  input.value = '';
+}
+
+function deleteFacePhoto(id) {
+  const b = blocks.find(b => b.id === id);
+  if (!b) return;
+  b.facePhoto = null;
+  rerenderBlock(id);
+}
+
+function deleteResearchImage(id, idx) {
+  const b = blocks.find(b => b.id === id);
+  if (!b) return;
+  b.researchImages.splice(idx, 1);
+  rerenderBlock(id);
+}
+
+function updateResearchCaption(id, idx, val) {
+  const b = blocks.find(b => b.id === id);
+  if (b && b.researchImages[idx]) b.researchImages[idx].name = val;
+}
+
+// ── PDF生成 ───────────────────────────────────────────────────────────────────
+async function generatePDF() {
+  if (blocks.length === 0) { toast('ブロックがありません', true); return; }
+  const title = document.getElementById('pdf-title').value || 'レポート';
+
+  const payload = {
+    title,
+    blocks: blocks.map(b => {
+      if (b.type === 'table')   return { type: 'table', rows: b.rows, hasHeader: b.hasHeader };
+      if (b.type === 'heading') return { type: 'heading', content: b.content };
+      if (b.type === 'text')    return { type: 'text', content: b.content };
+      if (b.type === 'spacer')  return { type: 'spacer' };
+      if (b.type === 'profile') return {
+        type: 'profile',
+        catchcopy: b.catchcopy,
+        nameJa: b.nameJa, nameEn: b.nameEn,
+        keywords: b.keywords, fieldName: b.fieldName,
+        email: b.email, emailLabel: b.emailLabel || 'email',
+        position: b.position, degree: b.degree,
+        pageNum: b.pageNum || '',
+        sections: b.sections,
+        facePhoto: b.facePhoto || null,
+        researchImages: (b.researchImages || []).map(r => ({ data: r.data, name: r.name }))
+      };
+      return b;
+    })
+  };
+
+  document.getElementById('status-msg').innerHTML = '<span>PDF生成中…</span>';
+  try {
+    const res = await fetch('/generate-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) { toast('PDF生成エラー', true); return; }
+
+    const blob = await res.blob();
+    currentPdfBlob = blob;
+
+    // プレビュー表示
+    const url = URL.createObjectURL(blob);
+    const iframe = document.getElementById('pdf-iframe');
+    iframe.src = url;
+    iframe.style.display = 'block';
+    document.getElementById('preview-placeholder').style.display = 'none';
+    document.getElementById('dl-btn').disabled = false;
+
+    toast('✓ PDF生成完了 — プレビューを確認してください');
+    document.getElementById('status-msg').innerHTML = `<span class="ok">✓ PDF生成完了</span>`;
+  } catch(e) {
+    toast('サーバーエラー', true);
+    document.getElementById('status-msg').innerHTML = `<span class="err">エラー</span>`;
+  }
+}
+
+function downloadPDF() {
+  if (!currentPdfBlob) return;
+  const title = document.getElementById('pdf-title').value || 'レポート';
+  const url = URL.createObjectURL(currentPdfBlob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${title}.pdf`; a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
