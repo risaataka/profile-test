@@ -118,6 +118,7 @@ def generate_pdf():
     # （プロフィール1件=1PDFページとして、PageBreakで分離）
     nombres_list   = []   # PDF物理ページ順のノンブル文字列
     catchcopy_list = []   # PDF物理ページ順のキャッチコピー文字列
+    face_list      = []   # PDF物理ページ順の顔写真 data_url
     first_profile = True
 
     for block in blocks:
@@ -148,6 +149,7 @@ def generate_pdf():
                 story.append(PageBreak())   # プロフィールを1ページ1件に分離
             nombres_list.append(str(block.get("pageNum", "") or ""))
             catchcopy_list.append(block.get("catchcopy", "") or "")
+            face_list.append(block.get("facePhoto"))   # 顔写真 data_url を保存
             story += _build_profile(block, styles, doc)
             first_profile = False
 
@@ -203,7 +205,58 @@ def generate_pdf():
                 p.drawOn(canvas, text_x, text_y)
                 canvas.restoreState()
 
-        # ② ノンブル（ピンク円バッジ、ピンク背景の外側）
+        # ② 顔写真カード（ピンク背景の右上に正確に配置）
+        page = canvas.getPageNumber()
+        if 1 <= page <= len(face_list):
+            _face_w   = 104
+            _face_h   = _face_w * 4 / 3
+            _pad      = 12
+            _outer_r  = 14
+            _inner_r  = 10
+            _card_w   = _face_w + 2 * _pad
+            _card_h   = _face_h + 2 * _pad
+            # 右端・上端をピンク背景の右端・上端に合わせる
+            _cx = pw - mx - _card_w   # カード左端
+            _cy = ph - my - _card_h   # カード下端（上端 = ph - my）
+            _PINK    = colors.HexColor("#E8567C")
+            _GRAY_PH = colors.HexColor("#CCCCCC")
+            # 外側 PINK 角丸
+            canvas.saveState()
+            canvas.setFillColor(_PINK)
+            canvas.roundRect(_cx, _cy, _card_w, _card_h, _outer_r, fill=1, stroke=0)
+            canvas.restoreState()
+            # 内側：Bezier クリップ + 写真 or グレー塗り
+            _k = 0.5523
+            _ix, _iy, _iw, _ih = _cx + _pad, _cy + _pad, _face_w, _face_h
+            _r = _inner_r
+            canvas.saveState()
+            _p = canvas.beginPath()
+            _p.moveTo(_ix + _r, _iy)
+            _p.lineTo(_ix + _iw - _r, _iy)
+            _p.curveTo(_ix + _iw - _r*(1-_k), _iy,          _ix + _iw, _iy + _r*(1-_k),      _ix + _iw, _iy + _r)
+            _p.lineTo(_ix + _iw, _iy + _ih - _r)
+            _p.curveTo(_ix + _iw, _iy + _ih - _r*(1-_k),    _ix + _iw - _r*(1-_k), _iy + _ih, _ix + _iw - _r, _iy + _ih)
+            _p.lineTo(_ix + _r, _iy + _ih)
+            _p.curveTo(_ix + _r*(1-_k), _iy + _ih,          _ix, _iy + _ih - _r*(1-_k),       _ix, _iy + _ih - _r)
+            _p.lineTo(_ix, _iy + _r)
+            _p.curveTo(_ix, _iy + _r*(1-_k),                _ix + _r*(1-_k), _iy,              _ix + _r, _iy)
+            _p.close()
+            canvas.clipPath(_p, stroke=0, fill=0)
+            _photo = face_list[page - 1]
+            if _photo:
+                _img = _b64_to_image(_photo, _face_w, _face_h)
+                if _img:
+                    _img.wrap(_face_w, _face_h)
+                    _img.drawOn(canvas, _ix, _iy)
+                else:
+                    canvas.setFillColor(_GRAY_PH)
+                    canvas.rect(_ix, _iy, _iw, _ih, fill=1, stroke=0)
+            else:
+                canvas.setFillColor(_GRAY_PH)
+                canvas.rect(_ix, _iy, _iw, _ih, fill=1, stroke=0)
+            canvas.restoreState()
+
+        # ③ ノンブル（ピンク円バッジ、ピンク背景の外側）
         page = canvas.getPageNumber()
         if 1 <= page <= len(nombres_list):
             nombre = nombres_list[page - 1]
@@ -661,26 +714,20 @@ def _build_profile(block, styles, doc):
             left_hdr.append(Spacer(1, 1.5 * mm))
 
     # 右：氏名カード（ピンク背景）
-    face_w = 96              # 横幅固定 96pt
-    face_h = face_w * 4 / 3  # 横3:縦4
-    face_el = _b64_to_image(face_photo_data, face_w, face_h)
-    if face_el is None:
-        face_el = Table([[""]], colWidths=[face_w], rowHeights=[face_h])
-        face_el.setStyle(TableStyle([
-            ("BACKGROUND", (0,0),(0,0), GRAY_PH),
-            ("TOPPADDING", (0,0),(0,0), 0),
-            ("BOTTOMPADDING", (0,0),(0,0), 0),
-        ]))
-    # 顔写真を PINK 背景カード（上下左右12pt マージン・角丸14pt）で囲む
-    face_card = _FaceCard(face_el, face_w, face_h, pad=12, radius=14, color=PINK)
+    face_w = 104             # 横幅固定 104pt（96+8）
+    face_h = face_w * 4 / 3  # 横3:縦4（比率維持）
+    # 顔写真カードは canvas callback (_draw_nombre) で正確な座標に描画するため、
+    # hdr_tbl の右カラムには同サイズの透明 Spacer だけ置いてレイアウトを確保する
+    face_card_h = face_h + 2 * 12   # pad=12 と同値
     right_hdr = [
-        Spacer(1, 2 * mm),
-        face_card,
+        Spacer(face_w + 24, face_card_h),
     ]
 
     hdr_tbl = Table([[left_hdr, right_hdr]], colWidths=[lw, rw])
     hdr_tbl.setStyle(TableStyle([
         ("VALIGN",       (0,0),(-1,-1), "TOP"),
+        # 右カラムを右揃え → face_card の右上が薄ピンク背景の右上に合致
+        ("ALIGN",        (1,0),(1,0),   "RIGHT"),
         # セル背景なし（顔写真は face_card で個別に PINK 背景を描く）
         ("TOPPADDING",   (0,0),(-1,-1), 0),
         ("BOTTOMPADDING",(0,0),(-1,-1), 0),
@@ -805,30 +852,66 @@ def _build_profile(block, styles, doc):
 
 
 class _FaceCard(Flowable):
-    """顔写真を角丸カード（PINK 背景）で囲む Flowable"""
-    def __init__(self, image_el, img_w, img_h, pad=12, radius=14, color=None):
+    """
+    顔写真を角丸カードで囲む Flowable
+    - outer_radius: 外側 PINK 枠の角丸
+    - inner_radius: 写真エリア（内側）の角丸（Bezier クリップパスで実現）
+    - gray_color  : 写真未設定時のプレースホルダー色（None なら実画像を描画）
+    """
+    def __init__(self, image_el, img_w, img_h, pad=12,
+                 outer_radius=14, inner_radius=12,
+                 color=None, gray_color=None):
         Flowable.__init__(self)
-        self.image_el = image_el
-        self.img_w    = img_w
-        self.img_h    = img_h
-        self.pad      = pad
-        self.radius   = radius
-        self.color    = color
-        self.width    = img_w + 2 * pad
-        self.height   = img_h + 2 * pad
+        self.image_el    = image_el
+        self.img_w       = img_w
+        self.img_h       = img_h
+        self.pad         = pad
+        self.outer_radius = outer_radius
+        self.inner_radius = inner_radius
+        self.color       = color
+        self.gray_color  = gray_color
+        self.width       = img_w + 2 * pad
+        self.height      = img_h + 2 * pad
 
     def wrap(self, availWidth, availHeight):
         return self.width, self.height
 
+    @staticmethod
+    def _make_rounded_path(c, x, y, w, h, r):
+        """Bezier 近似で角丸矩形のクリップパスを生成"""
+        k = 0.5523  # 4*(sqrt(2)-1)/3 ≈ 0.5523
+        p = c.beginPath()
+        p.moveTo(x + r, y)
+        p.lineTo(x + w - r, y)
+        p.curveTo(x + w - r*(1-k), y,           x + w, y + r*(1-k),     x + w, y + r)
+        p.lineTo(x + w, y + h - r)
+        p.curveTo(x + w, y + h - r*(1-k),       x + w - r*(1-k), y + h, x + w - r, y + h)
+        p.lineTo(x + r, y + h)
+        p.curveTo(x + r*(1-k), y + h,           x, y + h - r*(1-k),     x, y + h - r)
+        p.lineTo(x, y + r)
+        p.curveTo(x, y + r*(1-k),               x + r*(1-k), y,         x + r, y)
+        p.close()
+        return p
+
     def draw(self):
         c = self.canv
+        # ① 外側：PINK 角丸カード（outer_radius）
         c.saveState()
         c.setFillColor(self.color)
-        c.roundRect(0, 0, self.width, self.height, self.radius, fill=1, stroke=0)
+        c.roundRect(0, 0, self.width, self.height, self.outer_radius, fill=1, stroke=0)
         c.restoreState()
-        # drawOn の前に wrap() でレイアウトを確定させる（Table の場合に必須）
-        self.image_el.wrap(self.img_w, self.img_h)
-        self.image_el.drawOn(c, self.pad, self.pad)
+        # ② 内側：inner_radius でクリップして写真 or グレー塗り
+        c.saveState()
+        p = self._make_rounded_path(c, self.pad, self.pad,
+                                    self.img_w, self.img_h, self.inner_radius)
+        c.clipPath(p, stroke=0, fill=0)
+        if self.gray_color is not None:
+            c.setFillColor(self.gray_color)
+            c.rect(self.pad, self.pad, self.img_w, self.img_h, fill=1, stroke=0)
+        else:
+            self.image_el.wrap(self.img_w, self.img_h)
+            self.image_el.drawOn(c, self.pad, self.pad)
+        c.restoreState()
 
 
 class _PillFlowable(Flowable):
