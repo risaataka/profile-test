@@ -116,7 +116,8 @@ def generate_pdf():
 
     # ノンブル用：プロフィールの順番とページ番号文字列を収集
     # （プロフィール1件=1PDFページとして、PageBreakで分離）
-    nombres_list = []   # PDF物理ページ順のノンブル文字列
+    nombres_list   = []   # PDF物理ページ順のノンブル文字列
+    catchcopy_list = []   # PDF物理ページ順のキャッチコピー文字列
     first_profile = True
 
     for block in blocks:
@@ -146,6 +147,7 @@ def generate_pdf():
             if not first_profile:
                 story.append(PageBreak())   # プロフィールを1ページ1件に分離
             nombres_list.append(str(block.get("pageNum", "") or ""))
+            catchcopy_list.append(block.get("catchcopy", "") or "")
             story += _build_profile(block, styles, doc)
             first_profile = False
 
@@ -161,6 +163,45 @@ def generate_pdf():
         canvas.roundRect(mx, my, pw - 2 * mx, ph - 2 * my,
                          radius=bg_radius, fill=1, stroke=0)
         canvas.restoreState()
+
+        # ① キャッチコピー（薄ピンク背景の上・白カード付き）
+        page = canvas.getPageNumber()
+        if 1 <= page <= len(catchcopy_list):
+            cp_text = catchcopy_list[page - 1]
+            if cp_text:
+                cp_fs  = 14
+                pad_x  = 12
+                pad_tb = 8
+                card_r = 14
+                cp_style = ParagraphStyle("_cp", fontName=FONT_BOLD, fontSize=cp_fs,
+                                          leading=cp_fs * 1.5,
+                                          textColor=colors.HexColor("#1a1a1a"))
+                # 改行を <br/> に変換
+                cp_html = cp_text.replace("\n", "<br/>")
+                p = Paragraph(cp_html, cp_style)
+                card_w = 353
+                avail_h = my - 4   # 上マージン内
+                _, text_h = p.wrap(card_w - 2 * pad_x, avail_h)
+                card_h = text_h + 2 * pad_tb
+                card_y = ph - my - card_h + (my - card_h) / 2 + my  # 上マージン中央
+
+                # 白カード（左下角を直角に）
+                canvas.saveState()
+                canvas.setFillColor(colors.white)
+                card_base_y = ph - my + (my - card_h) / 2 - 24  # 24pt 下げる
+                canvas.roundRect(mx, card_base_y,
+                                 card_w, card_h, card_r, fill=1, stroke=0)
+                # 左下コーナーを直角に上書き
+                canvas.rect(mx, card_base_y, card_r, card_r, fill=1, stroke=0)
+                canvas.restoreState()
+
+                # テキスト描画
+                text_x = mx + pad_x
+                text_y = card_base_y + pad_tb
+                p.wrap(card_w - 2 * pad_x, text_h + 10)
+                canvas.saveState()
+                p.drawOn(canvas, text_x, text_y)
+                canvas.restoreState()
 
         # ② ノンブル（ピンク円バッジ、ピンク背景の外側）
         page = canvas.getPageNumber()
@@ -463,7 +504,7 @@ class _KeywordCard(Flowable):
         # 白いカード（テキストのみ）の高さ・幅
         # カード左端 = pad_x（バッジ左端と揃える）
         self._cx     = self.pad_x
-        self._cw     = availWidth - self.pad_x
+        self._cw     = availWidth - self.pad_x - 16
         # テキスト左端 = バッジ内テキスト左端（pad_x + BADGE_PAD_X）に揃える
         self._text_x = self.pad_x + self._BADGE_PAD_X
         inner_w      = availWidth - self._text_x - self.pad_x
@@ -584,7 +625,7 @@ def _build_profile(block, styles, doc):
 
     # ─── ① ヘッダー行（3:1）────────────────────────────────────────────────────
     # 左：キャッチコピー＋メタ情報
-    cp_s = ParagraphStyle("cp", fontName=FONT_BOLD, fontSize=18, leading=26,
+    cp_s = ParagraphStyle("cp", fontName=FONT_BOLD, fontSize=14, leading=20,
                             textColor=colors.HexColor("#1a1a1a"))
     kw_s = ParagraphStyle("kw", fontName=FONT_NAME, fontSize=Q13, leading=Q13*1.4,
                             textColor=BODY_COLOR)
@@ -611,52 +652,45 @@ def _build_profile(block, styles, doc):
 
     left_hdr = []
     if keywords:
+        left_hdr.append(Spacer(1, 40))
         left_hdr.append(_KeywordCard(keywords, PINK, kw_s))
-        left_hdr.append(Spacer(1, 1.5 * mm))
+        left_hdr.append(Spacer(1, 8))
     for badge_txt, val in [("分野等", field_name), (email_label, email)]:
         if val:
             left_hdr.append(_meta_row(badge_txt, val))
             left_hdr.append(Spacer(1, 1.5 * mm))
 
     # 右：氏名カード（ピンク背景）
-    face_el = _b64_to_image(face_photo_data, rw - 6 * mm, 30 * mm)
+    face_w = 96              # 横幅固定 96pt
+    face_h = face_w * 4 / 3  # 横3:縦4
+    face_el = _b64_to_image(face_photo_data, face_w, face_h)
     if face_el is None:
-        face_el = Table([[""]], colWidths=[rw - 6 * mm], rowHeights=[28 * mm])
+        face_el = Table([[""]], colWidths=[face_w], rowHeights=[face_h])
         face_el.setStyle(TableStyle([
             ("BACKGROUND", (0,0),(0,0), GRAY_PH),
             ("TOPPADDING", (0,0),(0,0), 0),
             ("BOTTOMPADDING", (0,0),(0,0), 0),
         ]))
+    # 顔写真を PINK 背景カード（上下左右12pt マージン・角丸14pt）で囲む
+    face_card = _FaceCard(face_el, face_w, face_h, pad=12, radius=14, color=PINK)
     right_hdr = [
-        Paragraph(name_en,
-                  ParagraphStyle("ne", fontName=FONT_NAME, fontSize=7, leading=9, textColor=PINK)),
-        Paragraph(f"<b>{name_ja}</b>",
-                  ParagraphStyle("nj", fontName=FONT_BOLD, fontSize=14, leading=18,
-                                 textColor=colors.HexColor("#111111"))),
         Spacer(1, 2 * mm),
-        face_el,
+        face_card,
     ]
 
     hdr_tbl = Table([[left_hdr, right_hdr]], colWidths=[lw, rw])
     hdr_tbl.setStyle(TableStyle([
         ("VALIGN",       (0,0),(-1,-1), "TOP"),
-        ("BACKGROUND",   (1,0),(1,0),   PINK_BG),
-        ("TOPPADDING",   (0,0),(-1,-1), 3),
-        ("BOTTOMPADDING",(0,0),(-1,-1), 4),
-        ("LEFTPADDING",  (0,0),(0,0),   0),
-        ("LEFTPADDING",  (1,0),(1,0),   5),
-        ("RIGHTPADDING", (0,0),(-1,-1), 4),
+        # セル背景なし（顔写真は face_card で個別に PINK 背景を描く）
+        ("TOPPADDING",   (0,0),(-1,-1), 0),
+        ("BOTTOMPADDING",(0,0),(-1,-1), 0),
+        ("LEFTPADDING",  (0,0),(-1,-1), 0),
+        ("RIGHTPADDING", (0,0),(-1,-1), 0),
     ]))
     KW_PAD_X = 12       # _KeywordCard.pad_x と同値
-    CARD_R   = 6 * mm  # 角丸半径（薄ピンク背景と共通）
-    if catchcopy:
-        story.append(_WhiteCard(catchcopy, cp_s,
-                                card_radius=CARD_R,   # 薄ピンクと同じ角丸半径
-                                offset_x=0,           # 薄ピンクの左端 x と同じ
-                                fixed_w=lw))          # 薄ピンクの左端から lw 幅
-        story.append(Spacer(1, -20))   # -20pt = 薄ピンク背景と20pt重なる
+    CARD_R   = 14       # 薄黄色カードの角丸半径 14pt
     story.append(hdr_tbl)
-    story.append(Spacer(1, 4 * mm))
+    story.append(Spacer(1, 24))
 
     # ─── ② 本体（3:1）──────────────────────────────────────────────────────
     body_s = ParagraphStyle("bs", fontName=FONT_NAME, fontSize=Q13, leading=Q13*1.65,
@@ -686,7 +720,7 @@ def _build_profile(block, styles, doc):
             radius        = CARD_R,
             pad_x         = 11,      # 11pt ≒ 11px
             pad_tb        = 11,      # 11pt ≒ 11px
-            fixed_h       = 636,     # 高さ固定 636pt ≒ 636px
+            fixed_h       = int(A4[1] - 2 * 11 * mm - face_h - 24 - 4 - 40),  # ページ高さ - マージン - hdr - spacer - 40pt
         )
         left_body.append(sections_card)
 
@@ -696,7 +730,14 @@ def _build_profile(block, styles, doc):
                                     leading=Q11 * 1.4, textColor=WHITE)
     bdg_v = ParagraphStyle("bv", fontName=FONT_BOLD, fontSize=Q13, leading=Q13*1.4,
                             textColor=BODY_COLOR)
-    right_body = []
+    right_body = [
+        Paragraph(name_en,
+                  ParagraphStyle("ne", fontName=FONT_NAME, fontSize=9, leading=12, textColor=PINK)),
+        Paragraph(f"<b>{name_ja}</b>",
+                  ParagraphStyle("nj", fontName=FONT_BOLD, fontSize=18, leading=22,
+                                 textColor=colors.HexColor("#111111"))),
+        Spacer(1, 3 * mm),
+    ]
     for lbl, val in [("職名", position), ("学位", degree)]:
         if not val:
             continue
@@ -717,22 +758,22 @@ def _build_profile(block, styles, doc):
             ("RIGHTPADDING", (0,0),(-1,-1), 2),
         ]))
         right_body.append(bt)
-        right_body.append(Spacer(1, 3 * mm))
+        right_body.append(Spacer(1, 1.5 * mm))
 
     Q10 = 10 * 0.25 * mm  # 10Q
     cap_s = ParagraphStyle("cap", fontName=FONT_NAME, fontSize=Q10, leading=Q10*1.4,
                              textColor=colors.HexColor("#555555"), alignment=0)  # 0=左揃え
-    ph_w = rw - 4 * mm
+    RI_W = 112   # 研究画像の固定横幅（pt ≒ px）
 
     if research_images:
         for ri in research_images:
-            img_el = _b64_to_image(ri.get("data"), ph_w, 26 * mm)
+            img_el = _b64_to_image(ri.get("data"), RI_W)   # 縦はアスペクト比自動
             if img_el:
                 right_body.append(img_el)
             else:
-                ph = Table([[""]], colWidths=[ph_w], rowHeights=[24 * mm])
+                ph = Table([[""]], colWidths=[RI_W], rowHeights=[RI_W * 3 // 4])
                 ph.setStyle(TableStyle([("BACKGROUND",(0,0),(0,0),GRAY_PH),
-                                         ("TOPPADDING",(0,0),(0,0),0),("BOTTOMPADDING",(0,0),(0,0),0)]))
+                                        ("TOPPADDING",(0,0),(0,0),0),("BOTTOMPADDING",(0,0),(0,0),0)]))
                 right_body.append(ph)
             cap_text = ri.get("name", "")
             if cap_text:
@@ -742,24 +783,52 @@ def _build_profile(block, styles, doc):
     else:
         # 画像未設定時：グレープレースホルダー4枚
         for _ in range(4):
-            ph = Table([[""]], colWidths=[ph_w], rowHeights=[24 * mm])
+            ph = Table([[""]], colWidths=[RI_W], rowHeights=[RI_W * 3 // 4])
             ph.setStyle(TableStyle([("BACKGROUND",(0,0),(0,0),GRAY_PH),
-                                     ("TOPPADDING",(0,0),(0,0),0),("BOTTOMPADDING",(0,0),(0,0),0)]))
+                                    ("TOPPADDING",(0,0),(0,0),0),("BOTTOMPADDING",(0,0),(0,0),0)]))
             right_body.append(ph)
             right_body.append(Spacer(1, 3 * mm))
 
     body_tbl = Table([[left_body, right_body]], colWidths=[lw, rw])
     body_tbl.setStyle(TableStyle([
         ("VALIGN",       (0,0),(-1,-1), "TOP"),
-        ("BACKGROUND",   (0,0),(0,0),   SEC_BG),   # 黄色背景を左セル全体に（カード下まで伸張）
+        # セル背景なし → _SectionsCard の roundRect で角丸を描く
         ("TOPPADDING",   (0,0),(-1,-1), 0),
         ("BOTTOMPADDING",(0,0),(-1,-1), 0),
         ("LEFTPADDING",  (0,0),(-1,-1), 0),
+        ("LEFTPADDING",  (1,0),(1,0),   12),        # セクションと右カラムの間 12pt
         ("RIGHTPADDING", (0,0),(0,0),   3 * mm),
         ("RIGHTPADDING", (1,0),(1,0),   0),
     ]))
     story.append(body_tbl)
     return story
+
+
+class _FaceCard(Flowable):
+    """顔写真を角丸カード（PINK 背景）で囲む Flowable"""
+    def __init__(self, image_el, img_w, img_h, pad=12, radius=14, color=None):
+        Flowable.__init__(self)
+        self.image_el = image_el
+        self.img_w    = img_w
+        self.img_h    = img_h
+        self.pad      = pad
+        self.radius   = radius
+        self.color    = color
+        self.width    = img_w + 2 * pad
+        self.height   = img_h + 2 * pad
+
+    def wrap(self, availWidth, availHeight):
+        return self.width, self.height
+
+    def draw(self):
+        c = self.canv
+        c.saveState()
+        c.setFillColor(self.color)
+        c.roundRect(0, 0, self.width, self.height, self.radius, fill=1, stroke=0)
+        c.restoreState()
+        # drawOn の前に wrap() でレイアウトを確定させる（Table の場合に必須）
+        self.image_el.wrap(self.img_w, self.img_h)
+        self.image_el.drawOn(c, self.pad, self.pad)
 
 
 class _PillFlowable(Flowable):

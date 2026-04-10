@@ -402,8 +402,9 @@ function buildProfileEditor(block) {
     </div>
     <div class="profile-field">
       <label>キャッチコピー</label>
-      <input class="profile-input" value="${esc(block.catchcopy)}"
-        oninput="updateBlock(${id},'catchcopy',this.value)" placeholder="例：マルチマテリアルと技術 - 和紙から金属・セラミックスまで">
+      <textarea class="profile-input" rows="3"
+        oninput="updateBlock(${id},'catchcopy',this.value)"
+        placeholder="例：マルチマテリアルと技術 - 和紙から金属・セラミックスまで">${esc(block.catchcopy)}</textarea>
     </div>
     <div class="profile-field">
       <label>キーワード</label>
