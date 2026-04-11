@@ -1,5 +1,4 @@
 import io
-import os
 import base64
 import pandas as pd
 from flask import Flask, render_template, request, jsonify, send_file
@@ -12,59 +11,33 @@ from reportlab.platypus import (
     Spacer, HRFlowable, KeepTogether, Image as RLImage, PageBreak, Flowable
 )
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+from utils.font_setup import FONT_NAME, FONT_BOLD
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 128 * 1024 * 1024  # 128MB（画像含むJSON対応）
 
-# ── フォント設定（日本語対応）──────────────────────────────────────────────────
-FONT_NAME = "Helvetica"
-FONT_BOLD = "Helvetica-Bold"
-
-# macOS の TTC フォントは subfontIndex=0 が必要
-SYSTEM_FONTS = [
-    ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", "HiraginoW3"),
-    ("/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc", "HiraginoW6"),
-    ("/Library/Fonts/ヒラギノ角ゴ ProN W3.ttc",         "HiraginoProN"),
-    ("/Library/Fonts/Arial Unicode MS.ttf",              "ArialUnicode"),
-    ("/System/Library/Fonts/Supplemental/Arial Unicode MS.ttf", "ArialUnicode"),
-]
-
-for font_path, font_alias in SYSTEM_FONTS:
-    if os.path.exists(font_path):
-        try:
-            kwargs = {"subfontIndex": 0} if font_path.endswith(".ttc") else {}
-            pdfmetrics.registerFont(TTFont(font_alias, font_path, **kwargs))
-            FONT_NAME = font_alias
-            FONT_BOLD = font_alias
-            print(f"[font] loaded: {font_path}")
-            break
-        except Exception as e:
-            print(f"[font] failed {font_path}: {e}")
-            continue
-
-# システムフォントが見つからない場合は ReportLab 内蔵 CID フォントを使用
-if FONT_NAME == "Helvetica":
-    try:
-        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-        pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
-        FONT_NAME = "HeiseiKakuGo-W5"
-        FONT_BOLD = "HeiseiKakuGo-W5"
-        print("[font] using built-in CID font: HeiseiKakuGo-W5")
-    except Exception as e:
-        print(f"[font] CID font failed: {e}. Japanese may not render.")
+# フォント設定は utils/font_setup.py で実施し、FONT_NAME / FONT_BOLD を import 済み
 
 # 13Q = 13 × 0.25mm = 3.25mm ≈ 9.21pt
 Q13 = 13 * 0.25 * mm  # ポイント単位
 
-# アクセントカラー（ピンク系）
-ACCENT     = colors.HexColor("#E8567C")
-ACCENT_BG  = colors.HexColor("#FDF2F5")
-PRIMARY    = colors.HexColor("#4F46E5")
-DARK       = colors.HexColor("#1E1B4B")
-BODY_COLOR = colors.HexColor("#1F2937")
-MUTED      = colors.HexColor("#6B7280")
-WHITE      = colors.white
+# ── カラーパレット（固定3色 + ブロックごとのメイン/サブ）─────────────────────────
+C_WHITE  = colors.white                  # ホワイト  #ffffff
+C_BLACK  = colors.HexColor("#1a1a1a")    # ブラック  #1a1a1a
+C_YELLOW = colors.HexColor("#fffeee")    # 黄色      #fffeee
+
+# デフォルトカラー（学科未指定時：機械系ピンク）
+DEFAULT_MAIN = "#e5809e"
+DEFAULT_SUB  = "#fbdbd6"
+
+# 後方互換（_build_styles 等グローバル参照用）
+ACCENT     = colors.HexColor(DEFAULT_MAIN)
+ACCENT_BG  = colors.HexColor(DEFAULT_SUB)
+PRIMARY    = colors.HexColor(DEFAULT_MAIN)
+DARK       = C_BLACK
+BODY_COLOR = C_BLACK
+MUTED      = C_BLACK
+WHITE      = C_WHITE
 
 
 # ── ルート ────────────────────────────────────────────────────────────────────
@@ -119,6 +92,7 @@ def generate_pdf():
     nombres_list   = []   # PDF物理ページ順のノンブル文字列
     catchcopy_list = []   # PDF物理ページ順のキャッチコピー文字列
     face_list      = []   # PDF物理ページ順の顔写真 data_url
+    page_colors    = []   # PDF物理ページ順の {'main': hex, 'sub': hex}
     first_profile = True
 
     for block in blocks:
@@ -149,7 +123,11 @@ def generate_pdf():
                 story.append(PageBreak())   # プロフィールを1ページ1件に分離
             nombres_list.append(str(block.get("pageNum", "") or ""))
             catchcopy_list.append(block.get("catchcopy", "") or "")
-            face_list.append(block.get("facePhoto"))   # 顔写真 data_url を保存
+            face_list.append(block.get("facePhoto"))
+            page_colors.append({
+                "main": block.get("mainColor", DEFAULT_MAIN),
+                "sub":  block.get("subColor",  DEFAULT_SUB),
+            })
             story += _build_profile(block, styles, doc)
             first_profile = False
 
@@ -159,41 +137,43 @@ def generate_pdf():
         mx, my = 16 * mm, 11 * mm    # ページ背景のマージン
         bg_radius = 6 * mm           # 角丸半径（≈24px）
 
-        # ① ページ背景：角丸の塗り（#fbdbd6）
+        # ページごとの色を取得
+        page = canvas.getPageNumber()
+        _pc   = page_colors[page - 1] if 1 <= page <= len(page_colors) else {"main": DEFAULT_MAIN, "sub": DEFAULT_SUB}
+        C_MAIN = colors.HexColor(_pc["main"])
+        C_SUB  = colors.HexColor(_pc["sub"])
+
+        # ① ページ背景：角丸の塗り（サブカラー）
         canvas.saveState()
-        canvas.setFillColor(colors.HexColor("#fbdbd6"))
+        canvas.setFillColor(C_SUB)
         canvas.roundRect(mx, my, pw - 2 * mx, ph - 2 * my,
                          radius=bg_radius, fill=1, stroke=0)
         canvas.restoreState()
 
-        # ① キャッチコピー（薄ピンク背景の上・白カード付き）
-        page = canvas.getPageNumber()
+        # ② キャッチコピー（薄ピンク背景の上・白カード付き）
         if 1 <= page <= len(catchcopy_list):
             cp_text = catchcopy_list[page - 1]
             if cp_text:
-                cp_fs  = 14
+                cp_fs  = 18
                 pad_x  = 12
                 pad_tb = 8
                 card_r = 14
                 cp_style = ParagraphStyle("_cp", fontName=FONT_BOLD, fontSize=cp_fs,
                                           leading=cp_fs * 1.5,
-                                          textColor=colors.HexColor("#1a1a1a"))
-                # 改行を <br/> に変換
+                                          textColor=C_BLACK)
                 cp_html = cp_text.replace("\n", "<br/>")
                 p = Paragraph(cp_html, cp_style)
                 card_w = 353
-                avail_h = my - 4   # 上マージン内
+                avail_h = my - 4
                 _, text_h = p.wrap(card_w - 2 * pad_x, avail_h)
                 card_h = text_h + 2 * pad_tb
-                card_y = ph - my - card_h + (my - card_h) / 2 + my  # 上マージン中央
 
                 # 白カード（左下角を直角に）
                 canvas.saveState()
-                canvas.setFillColor(colors.white)
-                card_base_y = ph - my + (my - card_h) / 2 - 24  # 24pt 下げる
+                canvas.setFillColor(C_WHITE)
+                card_base_y = ph - my + (my - card_h) / 2 - 32
                 canvas.roundRect(mx, card_base_y,
                                  card_w, card_h, card_r, fill=1, stroke=0)
-                # 左下コーナーを直角に上書き
                 canvas.rect(mx, card_base_y, card_r, card_r, fill=1, stroke=0)
                 canvas.restoreState()
 
@@ -205,27 +185,23 @@ def generate_pdf():
                 p.drawOn(canvas, text_x, text_y)
                 canvas.restoreState()
 
-        # ② 顔写真カード（ピンク背景の右上に正確に配置）
-        page = canvas.getPageNumber()
+        # ③ 顔写真カード（サブカラー背景の右上に正確に配置）
         if 1 <= page <= len(face_list):
-            _face_w   = 104
-            _face_h   = _face_w * 4 / 3
-            _pad      = 12
-            _outer_r  = 14
-            _inner_r  = 10
-            _card_w   = _face_w + 2 * _pad
-            _card_h   = _face_h + 2 * _pad
-            # 右端・上端をピンク背景の右端・上端に合わせる
-            _cx = pw - mx - _card_w   # カード左端
-            _cy = ph - my - _card_h   # カード下端（上端 = ph - my）
-            _PINK    = colors.HexColor("#E8567C")
-            _GRAY_PH = colors.HexColor("#CCCCCC")
-            # 外側 PINK 角丸
+            _face_w  = 104
+            _face_h  = _face_w * 4 / 3
+            _pad     = 12
+            _outer_r = 14
+            _inner_r = 10
+            _card_w  = _face_w + 2 * _pad
+            _card_h  = _face_h + 2 * _pad
+            _cx = pw - mx - _card_w
+            _cy = ph - my - _card_h
+            # 外側：メインカラー角丸
             canvas.saveState()
-            canvas.setFillColor(_PINK)
+            canvas.setFillColor(C_MAIN)
             canvas.roundRect(_cx, _cy, _card_w, _card_h, _outer_r, fill=1, stroke=0)
             canvas.restoreState()
-            # 内側：Bezier クリップ + 写真 or グレー塗り
+            # 内側：Bezier クリップ + 写真 or ホワイト塗り
             _k = 0.5523
             _ix, _iy, _iw, _ih = _cx + _pad, _cy + _pad, _face_w, _face_h
             _r = _inner_r
@@ -233,13 +209,13 @@ def generate_pdf():
             _p = canvas.beginPath()
             _p.moveTo(_ix + _r, _iy)
             _p.lineTo(_ix + _iw - _r, _iy)
-            _p.curveTo(_ix + _iw - _r*(1-_k), _iy,          _ix + _iw, _iy + _r*(1-_k),      _ix + _iw, _iy + _r)
+            _p.curveTo(_ix + _iw - _r*(1-_k), _iy,           _ix + _iw, _iy + _r*(1-_k),       _ix + _iw, _iy + _r)
             _p.lineTo(_ix + _iw, _iy + _ih - _r)
-            _p.curveTo(_ix + _iw, _iy + _ih - _r*(1-_k),    _ix + _iw - _r*(1-_k), _iy + _ih, _ix + _iw - _r, _iy + _ih)
+            _p.curveTo(_ix + _iw, _iy + _ih - _r*(1-_k),     _ix + _iw - _r*(1-_k), _iy + _ih, _ix + _iw - _r, _iy + _ih)
             _p.lineTo(_ix + _r, _iy + _ih)
-            _p.curveTo(_ix + _r*(1-_k), _iy + _ih,          _ix, _iy + _ih - _r*(1-_k),       _ix, _iy + _ih - _r)
+            _p.curveTo(_ix + _r*(1-_k), _iy + _ih,           _ix, _iy + _ih - _r*(1-_k),        _ix, _iy + _ih - _r)
             _p.lineTo(_ix, _iy + _r)
-            _p.curveTo(_ix, _iy + _r*(1-_k),                _ix + _r*(1-_k), _iy,              _ix + _r, _iy)
+            _p.curveTo(_ix, _iy + _r*(1-_k),                 _ix + _r*(1-_k), _iy,               _ix + _r, _iy)
             _p.close()
             canvas.clipPath(_p, stroke=0, fill=0)
             _photo = face_list[page - 1]
@@ -249,14 +225,14 @@ def generate_pdf():
                     _img.wrap(_face_w, _face_h)
                     _img.drawOn(canvas, _ix, _iy)
                 else:
-                    canvas.setFillColor(_GRAY_PH)
+                    canvas.setFillColor(C_WHITE)
                     canvas.rect(_ix, _iy, _iw, _ih, fill=1, stroke=0)
             else:
-                canvas.setFillColor(_GRAY_PH)
+                canvas.setFillColor(C_WHITE)
                 canvas.rect(_ix, _iy, _iw, _ih, fill=1, stroke=0)
             canvas.restoreState()
 
-        # ③ ノンブル（ピンク円バッジ、ピンク背景の外側）
+        # ④ ノンブル（メインカラー円バッジ、サブカラー背景の外側）
         page = canvas.getPageNumber()
         if 1 <= page <= len(nombres_list):
             nombre = nombres_list[page - 1]
@@ -272,14 +248,14 @@ def generate_pdf():
                 else:                                # 奇数：円の右端がページ右端から 14pt
                     cx = pw - 14 - CIRC_R
 
-                # ピンク円
+                # メインカラー円
                 canvas.saveState()
-                canvas.setFillColor(colors.HexColor("#E8567C"))
+                canvas.setFillColor(C_MAIN)
                 canvas.circle(cx, cy, CIRC_R, fill=1, stroke=0)
 
-                # ノンブルテキスト（白・円の中央）
+                # ノンブルテキスト（ホワイト・円の中央）
                 canvas.setFont(FONT_NAME, Q13)
-                canvas.setFillColor(colors.white)
+                canvas.setFillColor(C_WHITE)
                 text_y = cy - Q13 * 0.35   # ベースラインを縦中央に合わせる
                 canvas.drawCentredString(cx, text_y, nombre)
                 canvas.restoreState()
@@ -657,10 +633,13 @@ def _build_profile(block, styles, doc):
     CARD_W  = 362                # 薄黄色カードの幅（pt ≒ px）
     lw      = CARD_W + 2 * mm   # カード幅 + 左右余白
     rw      = pw - lw            # 右カラム幅
-    PINK    = colors.HexColor("#E8567C")
-    PINK_BG = colors.HexColor("#FDF2F5")
-    PINK_HD = colors.HexColor("#F06292")
-    GRAY_PH = colors.HexColor("#CCCCCC")
+    # ── ブロックごとのカラーパレット ──────────────────────────────────────────────
+    _main_hex = block.get("mainColor", DEFAULT_MAIN)
+    _sub_hex  = block.get("subColor",  DEFAULT_SUB)
+    PINK    = colors.HexColor(_main_hex)   # メインカラー
+    PINK_BG = colors.HexColor(_sub_hex)    # サブカラー
+    PINK_HD = colors.HexColor(_main_hex)   # メインカラー（セクション見出し）
+    GRAY_PH = C_WHITE                      # ホワイト（プレースホルダー）
     story   = []
 
     catchcopy       = block.get("catchcopy",      "")
@@ -705,7 +684,7 @@ def _build_profile(block, styles, doc):
 
     left_hdr = []
     if keywords:
-        left_hdr.append(Spacer(1, 40))
+        left_hdr.append(Spacer(1, 56))
         left_hdr.append(_KeywordCard(keywords, PINK, kw_s))
         left_hdr.append(Spacer(1, 8))
     for badge_txt, val in [("分野等", field_name), (email_label, email)]:
@@ -737,7 +716,7 @@ def _build_profile(block, styles, doc):
     KW_PAD_X = 12       # _KeywordCard.pad_x と同値
     CARD_R   = 14       # 薄黄色カードの角丸半径 14pt
     story.append(hdr_tbl)
-    story.append(Spacer(1, 24))
+    story.append(Spacer(1, 0))
 
     # ─── ② 本体（3:1）──────────────────────────────────────────────────────
     body_s = ParagraphStyle("bs", fontName=FONT_NAME, fontSize=Q13, leading=Q13*1.65,
@@ -746,7 +725,7 @@ def _build_profile(block, styles, doc):
                              textColor=WHITE, alignment=1)
 
     # 左：全セクションをひとつの角丸カードにまとめる
-    SEC_BG = colors.HexColor("#fffeee")
+    SEC_BG = C_YELLOW   # 黄色（固定）
 
     # 空セクションを除外してリスト化
     sec_pairs = [
@@ -779,10 +758,10 @@ def _build_profile(block, styles, doc):
                             textColor=BODY_COLOR)
     right_body = [
         Paragraph(name_en,
-                  ParagraphStyle("ne", fontName=FONT_NAME, fontSize=9, leading=12, textColor=PINK)),
+                  ParagraphStyle("ne", fontName=FONT_NAME, fontSize=9, leading=12, textColor=colors.HexColor("#1a1a1a"))),
         Paragraph(f"<b>{name_ja}</b>",
                   ParagraphStyle("nj", fontName=FONT_BOLD, fontSize=18, leading=22,
-                                 textColor=colors.HexColor("#111111"))),
+                                 textColor=colors.HexColor("#1a1a1a"))),
         Spacer(1, 3 * mm),
     ]
     for lbl, val in [("職名", position), ("学位", degree)]:
@@ -809,7 +788,7 @@ def _build_profile(block, styles, doc):
 
     Q10 = 10 * 0.25 * mm  # 10Q
     cap_s = ParagraphStyle("cap", fontName=FONT_NAME, fontSize=Q10, leading=Q10*1.4,
-                             textColor=colors.HexColor("#555555"), alignment=0)  # 0=左揃え
+                             textColor=colors.HexColor("#1a1a1a"), alignment=0)  # 0=左揃え
     RI_W = 112   # 研究画像の固定横幅（pt ≒ px）
 
     if research_images:

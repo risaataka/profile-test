@@ -81,6 +81,16 @@
 <div id="toast"></div>
 
 <script>
+// ── カラープリセット（学科別） ─────────────────────────────────────────────────
+const COLOR_PRESETS = {
+  mechanical: { label: '機械',   main: '#e5809e', sub: '#fbdbd6' },
+  electrical: { label: '電電',   main: '#eb8b45', sub: '#fbdbc3' },
+  control:    { label: '電制',   main: '#a181b9', sub: '#e4dced' },
+  material:   { label: '物質',   main: '#2ab0d0', sub: '#cfe9ed' },
+  env:        { label: '環境',   main: '#63b556', sub: '#d8eac4' },
+  general:    { label: '一般',   main: '#32b4a4', sub: '#d1e8d5' },
+};
+
 // ── 状態 ─────────────────────────────────────────────────────────────────────
 let blocks = [];
 let nextId = 1;
@@ -276,6 +286,9 @@ function addBlock(type, extra = {}) {
     block.pageNum    = block.pageNum    || '';
     block.facePhoto  = block.facePhoto  || null;
     block.researchImages = block.researchImages || [];
+    // カラー（デフォルト：機械系）
+    block.mainColor  = block.mainColor  || COLOR_PRESETS.mechanical.main;
+    block.subColor   = block.subColor   || COLOR_PRESETS.mechanical.sub;
     block.sections   = block.sections   || [
       { heading: '研究分野', content: '' },
       { heading: '興味のあること・技術PR', content: '' },
@@ -369,7 +382,22 @@ function buildProfileEditor(block) {
     </div>`
   ).join('');
 
+  // カラーセレクターHTML生成
+  const presetBtns = Object.entries(COLOR_PRESETS).map(([key, preset]) => {
+    const active = (block.mainColor === preset.main) ? 'color-preset-btn active' : 'color-preset-btn';
+    return `<button class="${active}"
+      style="background:${preset.main};border:2px solid ${block.mainColor===preset.main?'#1a1a1a':'transparent'};color:#fff;border-radius:999px;padding:3px 12px;font-size:11px;font-weight:bold;cursor:pointer;"
+      onclick="applyColorPreset(${id},'${key}')">${preset.label}</button>`;
+  }).join('');
+
   return `<div class="profile-editor">
+    <div class="profile-section-header">カラー</div>
+    <div class="profile-field">
+      <label>学科カラー</label>
+      <div id="color-presets-${id}" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
+        ${presetBtns}
+      </div>
+    </div>
     <div class="profile-section-header">基本情報</div>
     <div class="profile-field" style="max-width:120px">
       <label>ページ番号</label>
@@ -635,6 +663,25 @@ function updateResearchCaption(id, idx, val) {
   if (b && b.researchImages[idx]) b.researchImages[idx].name = val;
 }
 
+// ── カラープリセット適用 ──────────────────────────────────────────────────────
+function applyColorPreset(id, presetKey) {
+  const b = blocks.find(b => b.id === id);
+  if (!b) return;
+  const preset = COLOR_PRESETS[presetKey];
+  if (!preset) return;
+  b.mainColor = preset.main;
+  b.subColor  = preset.sub;
+  // ボタンのアクティブ状態を更新
+  const container = document.getElementById(`color-presets-${id}`);
+  if (container) {
+    container.querySelectorAll('button').forEach((btn, i) => {
+      const key = Object.keys(COLOR_PRESETS)[i];
+      const isActive = key === presetKey;
+      btn.style.border = `2px solid ${isActive ? '#1a1a1a' : 'transparent'}`;
+    });
+  }
+}
+
 // ── PDF生成 ───────────────────────────────────────────────────────────────────
 async function generatePDF() {
   if (blocks.length === 0) { toast('ブロックがありません', true); return; }
@@ -655,6 +702,8 @@ async function generatePDF() {
         email: b.email, emailLabel: b.emailLabel || 'email',
         position: b.position, degree: b.degree,
         pageNum: b.pageNum || '',
+        mainColor: b.mainColor || COLOR_PRESETS.mechanical.main,
+        subColor:  b.subColor  || COLOR_PRESETS.mechanical.sub,
         sections: b.sections,
         facePhoto: b.facePhoto || null,
         researchImages: (b.researchImages || []).map(r => ({ data: r.data, name: r.name }))

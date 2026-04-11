@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "Flask Dev Server",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["app.py"],
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["/Users/atakarisa/Desktop/開発/プロフィールtest/start_server.sh"],
       "port": 5001
     }
   ]
