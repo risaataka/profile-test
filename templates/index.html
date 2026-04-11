@@ -1,40 +1,9 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Excel → PDF 変換ツール</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<style></style>
-</head>
-<body>
+{% extends 'base.html' %}
 
+{% block content %}
 <div class="layout">
-  <!-- ── サイドバー ── -->
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <h1>Excel → PDF</h1>
-      <p>データを編集してPDFに書き出す</p>
-    </div>
 
-    <div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
-      <div class="icon">📂</div>
-      <strong>Excelを読み込む</strong>
-      <p>クリックまたはドラッグ＆ドロップ</p>
-      <p style="margin-top:4px;font-size:11px;">.xlsx / .xls</p>
-    </div>
-    <input type="file" id="file-input" accept=".xlsx,.xls">
-
-    <div class="sheet-list" id="sheet-list">
-      <h3>シート</h3>
-      <p style="font-size:12px;color:var(--text-muted);padding:4px 6px;">ファイルを読み込んでください</p>
-    </div>
-
-    <div class="sidebar-footer">
-      <label>PDFタイトル</label>
-      <input type="text" id="pdf-title" placeholder="タイトルを入力" value="レポート">
-    </div>
-  </aside>
+  {% include 'components/sidebar.html' %}
 
   <!-- ── メインエリア ── -->
   <div class="main">
@@ -60,26 +29,12 @@
     </div>
   </div>
 
-  <!-- ── PDFプレビューパネル ── -->
-  <div class="preview-panel">
-    <div class="preview-header">
-      <span>PDF プレビュー</span>
-      <div class="preview-actions">
-        <button class="preview-btn" onclick="downloadPDF()" id="dl-btn" disabled>ダウンロード</button>
-      </div>
-    </div>
-    <div class="preview-content">
-      <div class="preview-placeholder" id="preview-placeholder">
-        <div class="ph-icon">📋</div>
-        <p>「PDF書き出し＆プレビュー」<br>ボタンを押すとここに<br>プレビューが表示されます</p>
-      </div>
-      <iframe id="pdf-iframe" style="display:none"></iframe>
-    </div>
-  </div>
+  {% include 'components/preview.html' %}
+
 </div>
+{% endblock %}
 
-<div id="toast"></div>
-
+{% block scripts %}
 <script>
 // ── カラープリセット（学科別） ─────────────────────────────────────────────────
 const COLOR_PRESETS = {
@@ -518,7 +473,6 @@ function updateBlock(id, key, val) {
   const b = blocks.find(b => b.id === id);
   if (!b) return;
   b[key] = val;
-  // プロフィールブロックのバッジ名を氏名（日本語）に同期
   if (key === 'nameJa' && b.type === 'profile') {
     const badge = document.getElementById(`block-badge-${id}`);
     if (badge) badge.textContent = val || '教員プロフィール';
@@ -624,7 +578,6 @@ function loadResearchImages(id, input) {
   const b = blocks.find(b => b.id === id);
   if (!b) return;
 
-  // 既存画像の末尾に追加（置き換えではなく蓄積）
   const startIdx = b.researchImages.length;
   files.forEach(f => {
     b.researchImages.push({ data: null, name: f.name.replace(/\.[^.]+$/, '') });
@@ -636,11 +589,10 @@ function loadResearchImages(id, input) {
     reader.onload = e => {
       b.researchImages[startIdx + i].data = e.target.result;
       done++;
-      if (done === files.length) rerenderBlock(id); // 全件完了後に再描画
+      if (done === files.length) rerenderBlock(id);
     };
     reader.readAsDataURL(file);
   });
-  // inputをリセットして同じファイルも再選択できるようにする
   input.value = '';
 }
 
@@ -671,7 +623,6 @@ function applyColorPreset(id, presetKey) {
   if (!preset) return;
   b.mainColor = preset.main;
   b.subColor  = preset.sub;
-  // ボタンのアクティブ状態を更新
   const container = document.getElementById(`color-presets-${id}`);
   if (container) {
     container.querySelectorAll('button').forEach((btn, i) => {
@@ -724,7 +675,6 @@ async function generatePDF() {
     const blob = await res.blob();
     currentPdfBlob = blob;
 
-    // プレビュー表示
     const url = URL.createObjectURL(blob);
     const iframe = document.getElementById('pdf-iframe');
     iframe.src = url;
@@ -749,5 +699,4 @@ function downloadPDF() {
   URL.revokeObjectURL(url);
 }
 </script>
-</body>
-</html>
+{% endblock %}
