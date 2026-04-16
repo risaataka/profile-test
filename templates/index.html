@@ -1,5 +1,10 @@
 {% extends 'base.html' %}
 
+{% block head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js"></script>
+{% endblock %}
+
 {% block content %}
 <div class="layout">
 
@@ -9,8 +14,10 @@
   <div class="main">
     <!-- ツールバー -->
     <div class="toolbar">
+      <span>一括カラー</span>
+      <div id="global-color-presets" style="display:flex;gap:5px;align-items:center;"></div>
       <div class="spacer-h"></div>
-      <button class="btn primary" onclick="generatePDF()">⬇ PDF書き出し＆プレビュー</button>
+      <button class="btn primary" onclick="generatePDF()">→ PDF書き出し＆プレビュー</button>
     </div>
 
     <!-- エディタ -->
@@ -32,6 +39,22 @@
   {% include 'components/preview.html' %}
 
 </div>
+
+<!-- 顔写真トリミングモーダル -->
+<div id="face-crop-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:2000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:16px;padding:20px;width:460px;max-width:95vw;display:flex;flex-direction:column;gap:14px;box-shadow:0 8px 40px rgba(0,0,0,0.35);">
+    <div style="font-weight:700;font-size:14px;color:#1a1a1a;">顔写真のトリミング</div>
+    <div style="width:100%;overflow:hidden;border-radius:8px;background:#f0f0f0;">
+      <img id="face-crop-img" style="display:block;max-width:100%;">
+    </div>
+    <div style="font-size:11px;color:#888;">ドラッグで移動・コーナーでリサイズ・スクロールで拡大縮小</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn" onclick="cancelCrop()">キャンセル</button>
+      <button class="btn primary" onclick="confirmCrop()">✓ 確定</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -107,7 +130,7 @@ async function handleFile(file) {
 
 function renderSheetList(names) {
   const el = document.getElementById('sheet-list');
-  el.innerHTML = '<h3>読み込み済みシート</h3>';
+  el.innerHTML = '<h3>読み込み済みデータ</h3>';
   names.forEach(name => {
     const div = document.createElement('div');
     div.style.cssText = 'padding:5px 8px;font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:6px;';
@@ -160,7 +183,7 @@ function buildProfileFromPairs(pairs) {
     sections: [
       { heading: '研究分野',                          content: '' },
       { heading: '興味のあること・技術PR',             content: '' },
-      { heading: '特別設備',                          content: '' },
+      { heading: '特別設備',                          content: '', twoCol: false, content2: '' },
       { heading: '企業との連携実績',                   content: '' },
       { heading: 'つながりたい分野（産業界、自治体）',  content: '' },
     ]
@@ -241,16 +264,27 @@ function addBlock(type, extra = {}) {
     block.pageNum    = block.pageNum    || '';
     block.facePhoto  = block.facePhoto  || null;
     block.researchImages = block.researchImages || [];
+    if (block.showCatchcopy === undefined) block.showCatchcopy = true;
+    if (block.showFacePhoto  === undefined) block.showFacePhoto  = true;
+    if (block.showQR         === undefined) block.showQR         = true;
+    block.qrPhoto = block.qrPhoto || null;
     // カラー（デフォルト：機械系）
     block.mainColor  = block.mainColor  || COLOR_PRESETS.mechanical.main;
     block.subColor   = block.subColor   || COLOR_PRESETS.mechanical.sub;
     block.sections   = block.sections   || [
       { heading: '研究分野', content: '' },
       { heading: '興味のあること・技術PR', content: '' },
-      { heading: '特別設備', content: '' },
+      { heading: '特別設備', content: '', twoCol: false, content2: '' },
       { heading: '企業との連携実績', content: '' },
       { heading: 'つながりたい分野（産業界、自治体）', content: '' },
     ];
+    // 既存データに twoCol フィールドがない場合に補完
+    block.sections.forEach(s => {
+      if (s.heading === '特別設備') {
+        if (s.twoCol   === undefined) s.twoCol   = false;
+        if (s.content2 === undefined) s.content2 = '';
+      }
+    });
   }
 
   blocks.push(block);
@@ -311,19 +345,46 @@ function buildProfileEditor(block) {
   const id = block.id;
   let sectionsHtml = '';
   (block.sections || []).forEach((sec, i) => {
-    sectionsHtml += `
-      <div class="profile-field">
-        <label>${esc(sec.heading)}</label>
-        <textarea class="profile-textarea" placeholder="内容を入力..."
-          oninput="updateSection(${id},${i},this.value)">${esc(sec.content)}</textarea>
-      </div>`;
+    if (sec.heading === '特別設備') {
+      const isTwo = sec.twoCol === true;
+      const btnStyle = isTwo
+        ? 'background:var(--accent);color:#fff;border-color:var(--accent)'
+        : 'background:none;color:var(--text-muted);border-color:var(--border)';
+      sectionsHtml += `
+        <div class="profile-field">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+            <label style="margin-bottom:0">${esc(sec.heading)}</label>
+            <button style="${btnStyle};border:1.5px solid;border-radius:999px;padding:2px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;"
+              onclick="toggleSectionTwoCol(${id},${i})">2列表示</button>
+          </div>
+          ${isTwo ? `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <textarea class="profile-textarea" placeholder="左列の内容..."
+                oninput="updateSection(${id},${i},this.value)">${esc(sec.content)}</textarea>
+              <textarea class="profile-textarea" placeholder="右列の内容..."
+                oninput="updateSection2(${id},${i},this.value)">${esc(sec.content2 || '')}</textarea>
+            </div>
+          ` : `
+            <textarea class="profile-textarea" placeholder="内容を入力..."
+              oninput="updateSection(${id},${i},this.value)">${esc(sec.content)}</textarea>
+          `}
+        </div>`;
+    } else {
+      sectionsHtml += `
+        <div class="profile-field">
+          <label>${esc(sec.heading)}</label>
+          <textarea class="profile-textarea" placeholder="内容を入力..."
+            oninput="updateSection(${id},${i},this.value)">${esc(sec.content)}</textarea>
+        </div>`;
+    }
   });
 
   const faceThumb = block.facePhoto
     ? `<div class="face-img-wrap">
          <img src="${block.facePhoto}" class="face-thumb">
          <button class="face-del-overlay" onclick="deleteFacePhoto(${id})" title="削除">✕</button>
-       </div>`
+       </div>
+       <button class="btn" style="font-size:11px;padding:3px 10px;margin-top:4px;" onclick="openFaceCropperById(${id})">✂ トリミング</button>`
     : '';
   const researchThumbs = (block.researchImages || []).map((r, i) =>
     `<div class="research-item">
@@ -351,6 +412,21 @@ function buildProfileEditor(block) {
       <label>学科カラー</label>
       <div id="color-presets-${id}" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
         ${presetBtns}
+      </div>
+    </div>
+    <div class="profile-section-header">表示設定</div>
+    <div class="profile-field">
+      <div style="display:flex;gap:20px;margin-top:4px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" ${block.showCatchcopy !== false ? 'checked' : ''}
+            onchange="updateBlock(${id},'showCatchcopy',this.checked)">
+          キャッチコピーを掲載
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" ${block.showFacePhoto !== false ? 'checked' : ''}
+            onchange="updateBlock(${id},'showFacePhoto',this.checked)">
+          顔写真を掲載
+        </label>
       </div>
     </div>
     <div class="profile-section-header">基本情報</div>
@@ -411,6 +487,21 @@ function buildProfileEditor(block) {
         </div>
         <input class="profile-input" value="${esc(block.email)}"
           oninput="updateBlock(${id},'email',this.value)" placeholder="例：name@university.ac.jp">
+      </div>
+    </div>
+    <div class="profile-field">
+      <label>QRコード画像</label>
+      <p style="font-size:11px;color:var(--text-muted);margin:2px 0 6px;">URLを掲載する方はQRも併せてご掲載ください。</p>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:4px;">
+        <label class="photo-upload-btn" for="qr-file-${id}" style="font-size:11px;padding:4px 12px;">🔳 ファイルを選択</label>
+        <input id="qr-file-${id}" class="photo-file-input" type="file" accept="image/*"
+          onchange="loadQRPhoto(${id}, this)">
+        ${block.qrPhoto ? `
+          <div style="position:relative;display:inline-flex;">
+            <img src="${block.qrPhoto}" style="width:48px;height:48px;object-fit:contain;border:1px solid var(--border);border-radius:6px;">
+            <button style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;background:#ef4444;color:#fff;border:none;border-radius:50%;font-size:10px;cursor:pointer;line-height:1;display:flex;align-items:center;justify-content:center;"
+              onclick="deleteQRPhoto(${id})" title="削除">✕</button>
+          </div>` : ''}
       </div>
     </div>
     <div class="profile-section-header">各セクション</div>
@@ -482,6 +573,18 @@ function updateBlock(id, key, val) {
 function updateSection(id, idx, val) {
   const b = blocks.find(b => b.id === id);
   if (b && b.sections && b.sections[idx]) b.sections[idx].content = val;
+}
+
+function updateSection2(id, idx, val) {
+  const b = blocks.find(b => b.id === id);
+  if (b && b.sections && b.sections[idx]) b.sections[idx].content2 = val;
+}
+
+function toggleSectionTwoCol(id, i) {
+  const b = blocks.find(b => b.id === id);
+  if (!b || !b.sections || !b.sections[i]) return;
+  b.sections[i].twoCol = !b.sections[i].twoCol;
+  rerenderBlock(id);
 }
 
 function updateCell(id, r, c, val) {
@@ -560,16 +663,57 @@ function bindBlockEvents(el, block) {
 function loadFacePhoto(id, input) {
   const file = input.files[0];
   if (!file) return;
+  input.value = '';
   const reader = new FileReader();
-  reader.onload = e => {
-    updateBlock(id, 'facePhoto', e.target.result);
-    const el = document.getElementById(`face-ph-${id}`);
-    if (el) el.innerHTML = `<div class="face-img-wrap">
-      <img src="${e.target.result}" class="face-thumb">
-      <button class="face-del-overlay" onclick="deleteFacePhoto(${id})" title="削除">✕</button>
-    </div>`;
-  };
+  reader.onload = e => openFaceCropModal(id, e.target.result);
   reader.readAsDataURL(file);
+}
+
+// ── 顔写真トリミング ───────────────────────────────────────────────────────────
+const _crop = { cropper: null, blockId: null };
+
+function openFaceCropperById(id) {
+  const b = blocks.find(b => b.id === id);
+  if (!b || !b.facePhoto) return;
+  openFaceCropModal(id, b.facePhoto);
+}
+
+function openFaceCropModal(id, src) {
+  _crop.blockId = id;
+  if (_crop.cropper) { _crop.cropper.destroy(); _crop.cropper = null; }
+  const modal = document.getElementById('face-crop-modal');
+  const img   = document.getElementById('face-crop-img');
+  img.src = src;
+  modal.style.display = 'flex';
+  img.onload = () => {
+    _crop.cropper = new Cropper(img, {
+      aspectRatio: 3 / 4,
+      viewMode: 1,
+      dragMode: 'move',
+      autoCropArea: 0.9,
+      guides: true,
+      center: true,
+      highlight: false,
+      toggleDragModeOnDblclick: false,
+    });
+  };
+}
+
+function confirmCrop() {
+  if (!_crop.cropper) return;
+  const canvas = _crop.cropper.getCroppedCanvas({
+    width: 312, height: 416,
+    imageSmoothingEnabled: true,
+    imageSmoothingQuality: 'high',
+  });
+  updateBlock(_crop.blockId, 'facePhoto', canvas.toDataURL('image/jpeg', 0.92));
+  rerenderBlock(_crop.blockId);
+  cancelCrop();
+}
+
+function cancelCrop() {
+  if (_crop.cropper) { _crop.cropper.destroy(); _crop.cropper = null; }
+  document.getElementById('face-crop-modal').style.display = 'none';
 }
 
 function loadResearchImages(id, input) {
@@ -603,6 +747,25 @@ function deleteFacePhoto(id) {
   rerenderBlock(id);
 }
 
+function loadQRPhoto(id, input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  const reader = new FileReader();
+  reader.onload = e => {
+    updateBlock(id, 'qrPhoto', e.target.result);
+    rerenderBlock(id);
+  };
+  reader.readAsDataURL(file);
+}
+
+function deleteQRPhoto(id) {
+  const b = blocks.find(b => b.id === id);
+  if (!b) return;
+  b.qrPhoto = null;
+  rerenderBlock(id);
+}
+
 function deleteResearchImage(id, idx) {
   const b = blocks.find(b => b.id === id);
   if (!b) return;
@@ -615,7 +778,46 @@ function updateResearchCaption(id, idx, val) {
   if (b && b.researchImages[idx]) b.researchImages[idx].name = val;
 }
 
-// ── カラープリセット適用 ──────────────────────────────────────────────────────
+// ── 一括カラープリセット適用 ──────────────────────────────────────────────────
+function applyColorToAll(presetKey) {
+  const preset = COLOR_PRESETS[presetKey];
+  if (!preset) return;
+  blocks.forEach(b => {
+    if (b.type !== 'profile') return;
+    b.mainColor = preset.main;
+    b.subColor  = preset.sub;
+    // 各ブロックのカラーボタンのアクティブ状態も更新
+    const container = document.getElementById(`color-presets-${b.id}`);
+    if (container) {
+      container.querySelectorAll('button').forEach((btn, i) => {
+        const key = Object.keys(COLOR_PRESETS)[i];
+        btn.style.border = `2px solid ${key === presetKey ? '#1a1a1a' : 'transparent'}`;
+      });
+    }
+  });
+  // ツールバーのアクティブ状態を更新
+  document.querySelectorAll('#global-color-presets button').forEach(btn => {
+    btn.style.border = `2px solid ${btn.dataset.key === presetKey ? '#1a1a1a' : 'transparent'}`;
+  });
+  const preset_label = preset.label;
+  toast(`✓ 全プロフィールに「${preset_label}」カラーを適用しました`);
+}
+
+function _initGlobalColorPresets() {
+  const container = document.getElementById('global-color-presets');
+  if (!container) return;
+  container.innerHTML = '';
+  Object.entries(COLOR_PRESETS).forEach(([key, preset]) => {
+    const btn = document.createElement('button');
+    btn.textContent = preset.label;
+    btn.dataset.key = key;
+    btn.style.cssText = `background:${preset.main};border:2px solid transparent;color:#fff;border-radius:999px;padding:3px 12px;font-size:11px;font-weight:bold;cursor:pointer;`;
+    btn.onclick = () => applyColorToAll(key);
+    container.appendChild(btn);
+  });
+}
+
+// ── カラープリセット適用（個別） ──────────────────────────────────────────────
 function applyColorPreset(id, presetKey) {
   const b = blocks.find(b => b.id === id);
   if (!b) return;
@@ -636,7 +838,7 @@ function applyColorPreset(id, presetKey) {
 // ── PDF生成 ───────────────────────────────────────────────────────────────────
 async function generatePDF() {
   if (blocks.length === 0) { toast('ブロックがありません', true); return; }
-  const title = document.getElementById('pdf-title').value || 'レポート';
+  const title = document.getElementById('pdf-title').value || '教員プロフィールページ';
 
   const payload = {
     title,
@@ -657,7 +859,11 @@ async function generatePDF() {
         subColor:  b.subColor  || COLOR_PRESETS.mechanical.sub,
         sections: b.sections,
         facePhoto: b.facePhoto || null,
-        researchImages: (b.researchImages || []).map(r => ({ data: r.data, name: r.name }))
+        researchImages: (b.researchImages || []).map(r => ({ data: r.data, name: r.name })),
+        showCatchcopy: b.showCatchcopy !== false,
+        showFacePhoto: b.showFacePhoto  !== false,
+        qrPhoto: b.qrPhoto || null,
+        showQR: b.showQR !== false
       };
       return b;
     })
@@ -692,11 +898,14 @@ async function generatePDF() {
 
 function downloadPDF() {
   if (!currentPdfBlob) return;
-  const title = document.getElementById('pdf-title').value || 'レポート';
+  const title = document.getElementById('pdf-title').value || '教員プロフィールページ';
   const url = URL.createObjectURL(currentPdfBlob);
   const a = document.createElement('a');
   a.href = url; a.download = `${title}.pdf`; a.click();
   URL.revokeObjectURL(url);
 }
+
+// ── 初期化 ────────────────────────────────────────────────────────────────────
+_initGlobalColorPresets();
 </script>
 {% endblock %}
