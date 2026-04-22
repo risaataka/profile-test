@@ -10,6 +10,7 @@ import re
 import unicodedata
 
 from reportlab.lib import colors
+from reportlab.lib.colors import CMYKColor
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
@@ -34,19 +35,32 @@ def _fmt(text):
 # ── 単位定数 ──────────────────────────────────────────────────────────────────
 Q13 = 13 * 0.25 * mm   # 13Q ≈ 9.21pt
 
+# ── RGB→CMYK 変換ヘルパー ──────────────────────────────────────────────────────
+def _c(hex_str):
+    """HEX カラー文字列を CMYKColor に変換して返す。"""
+    h = hex_str.lstrip('#')
+    r, g, b = (int(h[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+    k = 1.0 - max(r, g, b)
+    if k >= 1.0:
+        return CMYKColor(0, 0, 0, 1)
+    c = (1.0 - r - k) / (1.0 - k)
+    m = (1.0 - g - k) / (1.0 - k)
+    y = (1.0 - b - k) / (1.0 - k)
+    return CMYKColor(round(c, 4), round(m, 4), round(y, 4), round(k, 4))
+
 # ── カラーパレット（固定3色） ──────────────────────────────────────────────────
-C_WHITE  = colors.white                 # #ffffff
-C_BLACK  = colors.HexColor("#1a1a1a")   # #1a1a1a
-C_YELLOW = colors.HexColor("#fffeee")   # #fffeee
+C_WHITE  = CMYKColor(0, 0, 0, 0)       # #ffffff
+C_BLACK  = _c("#1a1a1a")               # #1a1a1a
+C_YELLOW = _c("#fffeee")               # #fffeee
 
 # デフォルトカラー（学科未指定時：機械系ピンク）
 DEFAULT_MAIN = "#e5809e"
 DEFAULT_SUB  = "#fbdbd6"
 
 # 後方互換（_build_styles 内のグローバル参照用）
-ACCENT     = colors.HexColor(DEFAULT_MAIN)
-ACCENT_BG  = colors.HexColor(DEFAULT_SUB)
-PRIMARY    = colors.HexColor(DEFAULT_MAIN)
+ACCENT     = _c(DEFAULT_MAIN)
+ACCENT_BG  = _c(DEFAULT_SUB)
+PRIMARY    = _c(DEFAULT_MAIN)
 DARK       = C_BLACK
 BODY_COLOR = C_BLACK
 MUTED      = C_BLACK
@@ -139,9 +153,9 @@ def _build_table(rows, has_header, styles):
 
     tbl = Table(table_data, colWidths=[col_width] * col_count, repeatRows=1 if has_header else 0)
     cmd = [
-        ("BACKGROUND",    (0, 0), (-1, 0),  PRIMARY if has_header else colors.HexColor("#F8FAFF")),
-        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [WHITE, colors.HexColor("#F5F3FF")]),
-        ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#E0E7FF")),
+        ("BACKGROUND",    (0, 0), (-1, 0),  PRIMARY if has_header else _c("#F8FAFF")),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [WHITE, _c("#F5F3FF")]),
+        ("GRID",          (0, 0), (-1, -1), 0.5, _c("#E0E7FF")),
         ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING",    (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
@@ -340,7 +354,7 @@ class _KeywordCard(Flowable):
         c = self.canv
 
         c.saveState()
-        c.setFillColor(colors.white)
+        c.setFillColor(C_WHITE)
         c.roundRect(self._cx, 0, self._cw, self._card_h,
                     self.card_radius, fill=1, stroke=0)
         c.restoreState()
@@ -352,7 +366,7 @@ class _KeywordCard(Flowable):
         c.setFillColor(self.badge_color)
         c.roundRect(badge_x, badge_y, bw, bh, self._BADGE_R, fill=1, stroke=0)
         c.setFont(FONT_BOLD, self._BADGE_FS)
-        c.setFillColor(colors.white)
+        c.setFillColor(C_WHITE)
         text_y = badge_y + (bh - self._BADGE_FS) / 2
         c.drawString(badge_x + self._BADGE_PAD_X, text_y, "キーワード")
         c.restoreState()
@@ -393,7 +407,7 @@ class _WhiteCard(Flowable):
         r  = self.card_radius
 
         c.saveState()
-        c.setFillColor(colors.white)
+        c.setFillColor(C_WHITE)
         c.roundRect(ox, 0, cw, h, r, fill=1, stroke=0)
         c.rect(ox + cw - r, 0, r, r, fill=1, stroke=0)
         c.restoreState()
@@ -489,7 +503,7 @@ class _PillFlowable(Flowable):
         c.saveState()
         c.setFillColor(self.bg_color)
         if self.stroke:
-            c.setStrokeColor(colors.white)
+            c.setStrokeColor(C_WHITE)
             c.setLineWidth(1)
         c.roundRect(0, 0, w, h, r, fill=1, stroke=1 if self.stroke else 0)
         c.restoreState()
@@ -518,9 +532,9 @@ def _build_profile(block, styles, doc):
 
     _main_hex = block.get("mainColor", DEFAULT_MAIN)
     _sub_hex  = block.get("subColor",  DEFAULT_SUB)
-    PINK    = colors.HexColor(_main_hex)
-    PINK_BG = colors.HexColor(_sub_hex)
-    PINK_HD = colors.HexColor(_main_hex)
+    PINK    = _c(_main_hex)
+    PINK_BG = _c(_sub_hex)
+    PINK_HD = _c(_main_hex)
     GRAY_PH = C_WHITE
 
     story = []
@@ -544,7 +558,7 @@ def _build_profile(block, styles, doc):
     use_qr          = show_qr and bool(qr_photo)
 
     cp_s = ParagraphStyle("cp", fontName=FONT_BOLD, fontSize=14, leading=20,
-                           textColor=colors.HexColor("#1a1a1a"))
+                           textColor=C_BLACK)
     kw_s = ParagraphStyle("kw", fontName=FONT_NAME, fontSize=Q13, leading=Q13 * 1.4,
                            textColor=BODY_COLOR, wordWrap='CJK')
 
@@ -676,10 +690,10 @@ def _build_profile(block, styles, doc):
     right_body = [
         Paragraph(name_en,
                   ParagraphStyle("ne", fontName=FONT_NAME, fontSize=9, leading=12,
-                                 textColor=colors.HexColor("#1a1a1a"))),
+                                 textColor=C_BLACK)),
         Paragraph(f"<b>{name_ja}</b>",
                   ParagraphStyle("nj", fontName=FONT_BOLD, fontSize=18, leading=22,
-                                 textColor=colors.HexColor("#1a1a1a"))),
+                                 textColor=C_BLACK)),
         Spacer(1, 3 * mm),
     ]
     for lbl, val in [("職名", position), ("学位", degree)]:
@@ -705,7 +719,7 @@ def _build_profile(block, styles, doc):
 
     Q10 = 10 * 0.25 * mm
     cap_s = ParagraphStyle("cap", fontName=FONT_NAME, fontSize=Q10, leading=Q10 * 1.4,
-                             textColor=colors.HexColor("#1a1a1a"), alignment=0, wordWrap='CJK')
+                             textColor=C_BLACK, alignment=0, wordWrap='CJK')
     RI_W = 112
 
     right_body.append(Spacer(1, 13))  # 学位と研究画像の間
@@ -837,8 +851,8 @@ def build_pdf(data):
 
         page = canvas.getPageNumber()
         _pc    = page_colors[page - 1] if 1 <= page <= len(page_colors) else {"main": DEFAULT_MAIN, "sub": DEFAULT_SUB}
-        C_MAIN = colors.HexColor(_pc["main"])
-        C_SUB  = colors.HexColor(_pc["sub"])
+        C_MAIN = _c(_pc["main"])
+        C_SUB  = _c(_pc["sub"])
 
         # ① ページ背景
         canvas.saveState()
