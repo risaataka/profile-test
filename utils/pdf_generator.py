@@ -36,17 +36,27 @@ def _fmt(text):
 Q13 = 13 * 0.25 * mm   # 13Q ≈ 9.21pt
 
 # ── RGB→CMYK 変換ヘルパー ──────────────────────────────────────────────────────
+def _cmyk(vals):
+    """[C,M,Y,K]（0-100スケール）から CMYKColor を直接生成する。"""
+    c, m, y, k = [v / 100.0 for v in vals]
+    return CMYKColor(c, m, y, k)
+
 def _c(hex_str):
-    """HEX カラー文字列を CMYKColor に変換して返す。"""
+    """HEX カラー文字列を CMYKColor に変換して返す。
+    ・有彩色（saturation >= 0.05）: K=0 で CMY のみ → 彩度を保つ
+    ・無彩色（グレー・黒）: K のみ使用 → 中立を保つ
+    """
     h = hex_str.lstrip('#')
     r, g, b = (int(h[i:i+2], 16) / 255.0 for i in (0, 2, 4))
-    k = 1.0 - max(r, g, b)
-    if k >= 1.0:
-        return CMYKColor(0, 0, 0, 1)
-    c = (1.0 - r - k) / (1.0 - k)
-    m = (1.0 - g - k) / (1.0 - k)
-    y = (1.0 - b - k) / (1.0 - k)
-    return CMYKColor(round(c, 4), round(m, 4), round(y, 4), round(k, 4))
+    mx = max(r, g, b)
+    saturation = mx - min(r, g, b)
+    if saturation < 0.05:
+        # 無彩色（グレー・黒）: K のみ
+        k = round(1.0 - mx, 4)
+        return CMYKColor(0, 0, 0, min(k, 1.0))
+    else:
+        # 有彩色: K=0、CMY で彩度を維持
+        return CMYKColor(round(1.0 - r, 4), round(1.0 - g, 4), round(1.0 - b, 4), 0)
 
 # ── カラーパレット（固定3色） ──────────────────────────────────────────────────
 C_WHITE  = CMYKColor(0, 0, 0, 0)       # #ffffff
@@ -532,9 +542,11 @@ def _build_profile(block, styles, doc):
 
     _main_hex = block.get("mainColor", DEFAULT_MAIN)
     _sub_hex  = block.get("subColor",  DEFAULT_SUB)
-    PINK    = _c(_main_hex)
-    PINK_BG = _c(_sub_hex)
-    PINK_HD = _c(_main_hex)
+    _main_cmyk = block.get("mainCMYK")
+    _sub_cmyk  = block.get("subCMYK")
+    PINK    = _cmyk(_main_cmyk) if _main_cmyk else _c(_main_hex)
+    PINK_BG = _cmyk(_sub_cmyk)  if _sub_cmyk  else _c(_sub_hex)
+    PINK_HD = PINK
     GRAY_PH = C_WHITE
 
     story = []
@@ -782,14 +794,15 @@ def build_pdf(data):
     title  = data.get("title", "レポート")
     blocks = data.get("blocks", [])
 
+    BLEED = 3 * mm  # 塗り足し（各辺 3mm）
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
-        pagesize=A4,
-        leftMargin=16 * mm,
-        rightMargin=16 * mm,
-        topMargin=11 * mm,
-        bottomMargin=11 * mm,
+        pagesize=(A4[0] + 2 * BLEED, A4[1] + 2 * BLEED),
+        leftMargin=16 * mm + BLEED,
+        rightMargin=16 * mm + BLEED,
+        topMargin=11 * mm + BLEED,
+        bottomMargin=11 * mm + BLEED,
     )
 
     styles = _build_styles()
@@ -834,8 +847,10 @@ def build_pdf(data):
             catchcopy_list.append(block.get("catchcopy", "") or "")
             face_list.append(block.get("facePhoto"))
             page_colors.append({
-                "main": block.get("mainColor", DEFAULT_MAIN),
-                "sub":  block.get("subColor",  DEFAULT_SUB),
+                "main":      block.get("mainColor", DEFAULT_MAIN),
+                "sub":       block.get("subColor",  DEFAULT_SUB),
+                "main_cmyk": block.get("mainCMYK"),
+                "sub_cmyk":  block.get("subCMYK"),
             })
             prof_story, hdr_h, show_cp, show_fp = _build_profile(block, styles, doc)
             story += prof_story
@@ -845,16 +860,18 @@ def build_pdf(data):
             first_profile = False
 
     def _draw_nombre(canvas, doc):
-        pw, ph = A4
-        mx, my    = 16 * mm, 11 * mm
+        _bleed = 3 * mm
+        pw = A4[0] + 2 * _bleed
+        ph = A4[1] + 2 * _bleed
+        mx, my    = 16 * mm + _bleed, 11 * mm + _bleed
         bg_radius = 6 * mm
 
         page = canvas.getPageNumber()
         _pc    = page_colors[page - 1] if 1 <= page <= len(page_colors) else {"main": DEFAULT_MAIN, "sub": DEFAULT_SUB}
-        C_MAIN = _c(_pc["main"])
-        C_SUB  = _c(_pc["sub"])
+        C_MAIN = _cmyk(_pc["main_cmyk"]) if _pc.get("main_cmyk") else _c(_pc["main"])
+        C_SUB  = _cmyk(_pc["sub_cmyk"])  if _pc.get("sub_cmyk")  else _c(_pc["sub"])
 
-        # ① ページ背景
+        # ① ページ背景（ピンクはA4サイズのまま。白い紙が3mm塗り足し分として外に出る）
         canvas.saveState()
         canvas.setFillColor(C_SUB)
         canvas.roundRect(mx, my, pw - 2 * mx, ph - 2 * my,

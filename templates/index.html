@@ -59,14 +59,22 @@
 
 {% block scripts %}
 <script>
-// ── カラープリセット（学科別） ─────────────────────────────────────────────────
+// ── CMYK→HEX 変換（UI表示用） ────────────────────────────────────────────────
+function cmykToHex(c, m, y, k) {
+  const r = Math.round(255 * (1 - c/100) * (1 - k/100));
+  const g = Math.round(255 * (1 - m/100) * (1 - k/100));
+  const b = Math.round(255 * (1 - y/100) * (1 - k/100));
+  return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+// ── カラープリセット（学科別・CMYK値で管理） ──────────────────────────────────
 const COLOR_PRESETS = {
-  mechanical: { label: '機械',   main: '#e5809e', sub: '#fbdbd6' },
-  electrical: { label: '電電',   main: '#eb8b45', sub: '#fbdbc3' },
-  control:    { label: '電制',   main: '#a181b9', sub: '#e4dced' },
-  material:   { label: '物質',   main: '#2ab0d0', sub: '#cfe9ed' },
-  env:        { label: '環境',   main: '#63b556', sub: '#d8eac4' },
-  general:    { label: '一般',   main: '#32b4a4', sub: '#d1e8d5' },
+  mechanical: { label: '機械', main: '#e5809e', sub: '#fbdbd6', mainCMYK:[5,60,16,0],  subCMYK:[0,20,12,0]  },
+  electrical: { label: '電電', main: '#eb8b45', sub: '#fbdbc3', mainCMYK:[0,56,74,0],  subCMYK:[0,19,23,0]  },
+  control:    { label: '電制', main: '#a181b9', sub: '#e4dced', mainCMYK:[42,53,0,0],  subCMYK:[12,15,0,0]  },
+  material:   { label: '物質', main: '#2ab0d0', sub: '#cfe9ed', mainCMYK:[70,8,15,0],  subCMYK:[22,0,8,0]   },
+  env:        { label: '環境', main: '#63b556', sub: '#d8eac4', mainCMYK:[63,0,82,0],  subCMYK:[19,0,30,0]  },
+  general:    { label: '一般', main: '#32b4a4', sub: '#d1e8d5', mainCMYK:[70,0,42,0],  subCMYK:[22,0,21,0]  },
 };
 
 // ── 状態 ─────────────────────────────────────────────────────────────────────
@@ -271,6 +279,8 @@ function addBlock(type, extra = {}) {
     // カラー（デフォルト：機械系）
     block.mainColor  = block.mainColor  || COLOR_PRESETS.mechanical.main;
     block.subColor   = block.subColor   || COLOR_PRESETS.mechanical.sub;
+    if (!block.mainCMYK) block.mainCMYK = COLOR_PRESETS.mechanical.mainCMYK;
+    if (!block.subCMYK)  block.subCMYK  = COLOR_PRESETS.mechanical.subCMYK;
     block.sections   = block.sections   || [
       { heading: '研究分野', content: '' },
       { heading: '興味のあること・技術PR', content: '' },
@@ -786,6 +796,8 @@ function applyColorToAll(presetKey) {
     if (b.type !== 'profile') return;
     b.mainColor = preset.main;
     b.subColor  = preset.sub;
+    b.mainCMYK  = preset.mainCMYK;
+    b.subCMYK   = preset.subCMYK;
     // 各ブロックのカラーボタンのアクティブ状態も更新
     const container = document.getElementById(`color-presets-${b.id}`);
     if (container) {
@@ -825,6 +837,8 @@ function applyColorPreset(id, presetKey) {
   if (!preset) return;
   b.mainColor = preset.main;
   b.subColor  = preset.sub;
+  b.mainCMYK  = preset.mainCMYK;
+  b.subCMYK   = preset.subCMYK;
   const container = document.getElementById(`color-presets-${id}`);
   if (container) {
     container.querySelectorAll('button').forEach((btn, i) => {
@@ -863,7 +877,9 @@ async function generatePDF() {
         showCatchcopy: b.showCatchcopy !== false,
         showFacePhoto: b.showFacePhoto  !== false,
         qrPhoto: b.qrPhoto || null,
-        showQR: b.showQR !== false
+        showQR: b.showQR !== false,
+        mainCMYK: b.mainCMYK || null,
+        subCMYK:  b.subCMYK  || null
       };
       return b;
     })
