@@ -43,7 +43,7 @@
 <!-- 顔写真トリミングモーダル -->
 <div id="face-crop-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:2000;align-items:center;justify-content:center;">
   <div style="background:#fff;border-radius:16px;padding:20px;width:460px;max-width:95vw;display:flex;flex-direction:column;gap:14px;box-shadow:0 8px 40px rgba(0,0,0,0.35);">
-    <div style="font-weight:700;font-size:14px;color:#1a1a1a;">顔写真のトリミング</div>
+    <div id="crop-modal-title" style="font-weight:700;font-size:14px;color:#1a1a1a;">顔写真のトリミング</div>
     <div style="width:100%;overflow:hidden;border-radius:8px;background:#f0f0f0;">
       <img id="face-crop-img" style="display:block;max-width:100%;">
     </div>
@@ -189,11 +189,11 @@ function buildProfileFromPairs(pairs) {
     position: '', degree: '', pageNum: '',
     facePhoto: null, researchImages: [],
     sections: [
-      { heading: '研究分野',                          content: '' },
-      { heading: '興味のあること・技術PR',             content: '' },
-      { heading: '特別設備',                          content: '', twoCol: false, content2: '' },
-      { heading: '企業との連携実績',                   content: '' },
-      { heading: 'つながりたい分野（産業界、自治体）',  content: '' },
+      { heading: '研究分野',                          content: '', listMode: false },
+      { heading: '興味のあること・技術PR',             content: '', listMode: false },
+      { heading: '特別設備',                          content: '', twoCol: false, content2: '', listMode: false },
+      { heading: '企業との連携実績',                   content: '', listMode: false },
+      { heading: 'つながりたい分野（産業界、自治体）',  content: '', listMode: false },
     ]
   };
 
@@ -282,18 +282,19 @@ function addBlock(type, extra = {}) {
     if (!block.mainCMYK) block.mainCMYK = COLOR_PRESETS.mechanical.mainCMYK;
     if (!block.subCMYK)  block.subCMYK  = COLOR_PRESETS.mechanical.subCMYK;
     block.sections   = block.sections   || [
-      { heading: '研究分野', content: '' },
-      { heading: '興味のあること・技術PR', content: '' },
-      { heading: '特別設備', content: '', twoCol: false, content2: '' },
-      { heading: '企業との連携実績', content: '' },
-      { heading: 'つながりたい分野（産業界、自治体）', content: '' },
+      { heading: '研究分野', content: '', listMode: false },
+      { heading: '興味のあること・技術PR', content: '', listMode: false },
+      { heading: '特別設備', content: '', twoCol: false, content2: '', listMode: false },
+      { heading: '企業との連携実績', content: '', listMode: false },
+      { heading: 'つながりたい分野（産業界、自治体）', content: '', listMode: false },
     ];
-    // 既存データに twoCol フィールドがない場合に補完
+    // 既存データにフィールドがない場合に補完
     block.sections.forEach(s => {
       if (s.heading === '特別設備') {
         if (s.twoCol   === undefined) s.twoCol   = false;
         if (s.content2 === undefined) s.content2 = '';
       }
+      if (s.listMode === undefined) s.listMode = false;
     });
   }
 
@@ -355,6 +356,14 @@ function buildProfileEditor(block) {
   const id = block.id;
   let sectionsHtml = '';
   (block.sections || []).forEach((sec, i) => {
+    const isList = sec.listMode === true;
+    const listBtnStyle = isList
+      ? 'background:var(--primary);color:#fff;border-color:var(--primary)'
+      : 'background:none;color:var(--text-muted);border-color:var(--border)';
+    const listBtn = `<button style="${listBtnStyle};border:1.5px solid;border-radius:999px;padding:2px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;"
+      onclick="toggleSectionListMode(${id},${i})">箇条書き</button>`;
+    const listHint = isList ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">1行につき1項目。PDFでは点線で区切られます。</div>` : '';
+
     if (sec.heading === '特別設備') {
       const isTwo = sec.twoCol === true;
       const btnStyle = isTwo
@@ -366,7 +375,9 @@ function buildProfileEditor(block) {
             <label style="margin-bottom:0">${esc(sec.heading)}</label>
             <button style="${btnStyle};border:1.5px solid;border-radius:999px;padding:2px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;"
               onclick="toggleSectionTwoCol(${id},${i})">2列表示</button>
+            ${listBtn}
           </div>
+          ${listHint}
           ${isTwo ? `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
               <textarea class="profile-textarea" placeholder="左列の内容..."
@@ -382,7 +393,11 @@ function buildProfileEditor(block) {
     } else {
       sectionsHtml += `
         <div class="profile-field">
-          <label>${esc(sec.heading)}</label>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+            <label style="margin-bottom:0">${esc(sec.heading)}</label>
+            ${listBtn}
+          </div>
+          ${listHint}
           <textarea class="profile-textarea" placeholder="内容を入力..."
             oninput="updateSection(${id},${i},this.value)">${esc(sec.content)}</textarea>
         </div>`;
@@ -399,8 +414,9 @@ function buildProfileEditor(block) {
   const researchThumbs = (block.researchImages || []).map((r, i) =>
     `<div class="research-item">
       <div class="research-img-wrap">
-        <img src="${esc(r.data || '')}">
+        <img src="${esc(r.data || r.originalData || '')}">
         <button class="research-del-btn" onclick="deleteResearchImage(${id},${i})" title="削除">✕</button>
+        <button class="research-crop-btn" onclick="openResearchCropperById(${id},${i})" title="トリミング">✂</button>
       </div>
       <textarea class="research-cap-input"
         oninput="updateResearchCaption(${id},${i},this.value)"
@@ -597,6 +613,13 @@ function toggleSectionTwoCol(id, i) {
   rerenderBlock(id);
 }
 
+function toggleSectionListMode(id, i) {
+  const b = blocks.find(b => b.id === id);
+  if (!b || !b.sections || !b.sections[i]) return;
+  b.sections[i].listMode = !b.sections[i].listMode;
+  rerenderBlock(id);
+}
+
 function updateCell(id, r, c, val) {
   const b = blocks.find(b => b.id === id);
   if (b && b.rows[r]) b.rows[r][c] = val;
@@ -679,8 +702,8 @@ function loadFacePhoto(id, input) {
   reader.readAsDataURL(file);
 }
 
-// ── 顔写真トリミング ───────────────────────────────────────────────────────────
-const _crop = { cropper: null, blockId: null };
+// ── 顔写真・研究画像トリミング ─────────────────────────────────────────────────
+const _crop = { cropper: null, blockId: null, mode: 'face', researchIdx: null };
 
 function openFaceCropperById(id) {
   const b = blocks.find(b => b.id === id);
@@ -689,7 +712,23 @@ function openFaceCropperById(id) {
 }
 
 function openFaceCropModal(id, src) {
-  _crop.blockId = id;
+  _crop.blockId = id; _crop.mode = 'face'; _crop.researchIdx = null;
+  document.getElementById('crop-modal-title').textContent = '顔写真のトリミング';
+  _openCropModal(src, 3 / 4);
+}
+
+function openResearchCropperById(id, idx) {
+  const b = blocks.find(b => b.id === id);
+  const r = b && b.researchImages[idx];
+  if (!r) return;
+  const src = r.originalData || r.data; // 常に元画像からトリミング開始
+  if (!src) return;
+  _crop.blockId = id; _crop.mode = 'research'; _crop.researchIdx = idx;
+  document.getElementById('crop-modal-title').textContent = '研究画像のトリミング';
+  _openCropModal(src, NaN);
+}
+
+function _openCropModal(src, aspectRatio) {
   if (_crop.cropper) { _crop.cropper.destroy(); _crop.cropper = null; }
   const modal = document.getElementById('face-crop-modal');
   const img   = document.getElementById('face-crop-img');
@@ -697,7 +736,7 @@ function openFaceCropModal(id, src) {
   modal.style.display = 'flex';
   img.onload = () => {
     _crop.cropper = new Cropper(img, {
-      aspectRatio: 3 / 4,
+      aspectRatio,
       viewMode: 1,
       dragMode: 'move',
       autoCropArea: 0.9,
@@ -711,12 +750,21 @@ function openFaceCropModal(id, src) {
 
 function confirmCrop() {
   if (!_crop.cropper) return;
-  const canvas = _crop.cropper.getCroppedCanvas({
-    width: 312, height: 416,
-    imageSmoothingEnabled: true,
-    imageSmoothingQuality: 'high',
-  });
-  updateBlock(_crop.blockId, 'facePhoto', canvas.toDataURL('image/jpeg', 0.92));
+  if (_crop.mode === 'face') {
+    const canvas = _crop.cropper.getCroppedCanvas({
+      width: 312, height: 416,
+      imageSmoothingEnabled: true, imageSmoothingQuality: 'high',
+    });
+    updateBlock(_crop.blockId, 'facePhoto', canvas.toDataURL('image/jpeg', 0.92));
+  } else {
+    const canvas = _crop.cropper.getCroppedCanvas({
+      imageSmoothingEnabled: true, imageSmoothingQuality: 'high',
+    });
+    const b = blocks.find(b => b.id === _crop.blockId);
+    if (b && b.researchImages[_crop.researchIdx]) {
+      b.researchImages[_crop.researchIdx].data = canvas.toDataURL('image/jpeg', 0.92);
+    }
+  }
   rerenderBlock(_crop.blockId);
   cancelCrop();
 }
@@ -734,14 +782,15 @@ function loadResearchImages(id, input) {
 
   const startIdx = b.researchImages.length;
   files.forEach(f => {
-    b.researchImages.push({ data: null, name: f.name.replace(/\.[^.]+$/, '') });
+    b.researchImages.push({ originalData: null, data: null, name: f.name.replace(/\.[^.]+$/, '') });
   });
 
   let done = 0;
   files.forEach((file, i) => {
     const reader = new FileReader();
     reader.onload = e => {
-      b.researchImages[startIdx + i].data = e.target.result;
+      b.researchImages[startIdx + i].originalData = e.target.result;
+      b.researchImages[startIdx + i].data         = e.target.result; // 未トリミング時は元画像
       done++;
       if (done === files.length) rerenderBlock(id);
     };

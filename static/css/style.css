@@ -141,6 +141,11 @@ body { font-family: -apple-system, 'Helvetica Neue', 'Noto Sans JP', Arial, sans
                     font-size: 9px; font-weight: 700; cursor: pointer; line-height: 1;
                     display: flex; align-items: center; justify-content: center; padding: 0; }
 .research-del-btn:hover { background: #C00; }
+.research-crop-btn { position: absolute; bottom: -5px; right: -5px; width: 18px; height: 18px;
+                     border-radius: 50%; border: none; background: var(--accent); color: #fff;
+                     font-size: 10px; cursor: pointer; line-height: 1;
+                     display: flex; align-items: center; justify-content: center; padding: 0; }
+.research-crop-btn:hover { opacity: 0.8; }
 .research-cap-input { flex: 1; font-size: 11px; border: 1.5px solid var(--border);
                       border-radius: 4px; padding: 5px 8px; font-family: inherit;
                       resize: none; outline: none; height: 60px; line-height: 1.5; }

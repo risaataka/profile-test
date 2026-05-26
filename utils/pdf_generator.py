@@ -228,7 +228,50 @@ class _SectionsCard(Flowable):
         self.fixed_h       = fixed_h
         self._metrics      = []
 
-    _COL_GAP = 8  # 2列レイアウト時の列間隔
+    _COL_GAP      = 18   # 2列レイアウト時の列間隔
+    _SEP_ABOVE    = 0.0  # テキスト下端 → 点線（pt）
+    _SEP_BELOW    = 2.0  # 点線 → 次テキスト上端（pt）
+    _SEP_H        = _SEP_ABOVE + _SEP_BELOW   # アイテム間の総スペース = 5.6pt
+    _LIST_LINE_W  = 0.7  # 区切り線の太さ
+    _LIST_LINE_C  = CMYKColor(0, 0, 0, 0.4)  # K=40%
+
+    # ── 箇条書きヘルパー ──────────────────────────────────────────────────────
+    def _list_h(self, lines, w):
+        """箇条書きモード: 複数行の合計高さを計算する。"""
+        total = 0
+        first = True
+        for line in lines:
+            if not line.strip():
+                continue
+            bp = Paragraph(line, self.bstyle)
+            _, lh = bp.wrap(w, 9999)
+            if not first:
+                total += self._SEP_H
+            total += lh
+            first = False
+        return total
+
+    def _draw_list_body(self, c, lines, x, top_y, w):
+        """箇条書きモード: 点線区切り付きで各行を描画する。"""
+        y = top_y
+        first = True
+        for line in lines:
+            if not line.strip():
+                continue
+            bp = Paragraph(line, self.bstyle)
+            _, lh = bp.wrap(w, 9999)
+            if not first:
+                sep_y = y - self._SEP_ABOVE
+                c.saveState()
+                c.setStrokeColor(self._LIST_LINE_C)
+                c.setLineWidth(self._LIST_LINE_W)
+                c.setDash(2, 2)
+                c.line(x, sep_y, x + w, sep_y)
+                c.restoreState()
+                y -= self._SEP_H
+            bp.drawOn(c, x, y - lh)
+            y -= lh
+            first = False
 
     def wrap(self, availWidth, availHeight):
         w       = self.card_w
@@ -239,10 +282,11 @@ class _SectionsCard(Flowable):
         total_h = self.pad_tb
 
         for i, sec_data in enumerate(self.sections_data):
-            heading  = sec_data[0]
-            body1    = sec_data[1]
-            two_col  = sec_data[2] if len(sec_data) > 2 else False
-            body2    = sec_data[3] if len(sec_data) > 3 else ""
+            heading   = sec_data[0]
+            body1     = sec_data[1]
+            two_col   = sec_data[2] if len(sec_data) > 2 else False
+            body2     = sec_data[3] if len(sec_data) > 3 else ""
+            list_mode = sec_data[4] if len(sec_data) > 4 else False
 
             hp = Paragraph(heading, self.hstyle)
             _, th = hp.wrap(self._HEAD_W, availHeight)
@@ -250,16 +294,26 @@ class _SectionsCard(Flowable):
 
             if two_col:
                 col_w = (inner_w - self._COL_GAP) / 2
-                bp1 = Paragraph(body1, self.bstyle) if body1 else None
-                bp2 = Paragraph(body2, self.bstyle) if body2 else None
-                _, bh1 = bp1.wrap(col_w, availHeight) if bp1 else (0, 0)
-                _, bh2 = bp2.wrap(col_w, availHeight) if bp2 else (0, 0)
+                if list_mode:
+                    lines1 = body1.split('\n')
+                    lines2 = body2.split('\n')
+                    bh1 = self._list_h(lines1, col_w)
+                    bh2 = self._list_h(lines2, col_w)
+                else:
+                    bp1 = Paragraph(body1, self.bstyle) if body1 else None
+                    bp2 = Paragraph(body2, self.bstyle) if body2 else None
+                    _, bh1 = bp1.wrap(col_w, availHeight) if bp1 else (0, 0)
+                    _, bh2 = bp2.wrap(col_w, availHeight) if bp2 else (0, 0)
                 bh = max(bh1, bh2)
-                self._metrics.append((hh, bh, True, bh1, bh2, col_w))
+                self._metrics.append((hh, bh, True, bh1, bh2, col_w, list_mode))
             else:
-                bp = Paragraph(body1, self.bstyle)
-                _, bh = bp.wrap(inner_w, availHeight)
-                self._metrics.append((hh, bh, False, bh, 0, inner_w))
+                if list_mode:
+                    lines1 = body1.split('\n')
+                    bh = self._list_h(lines1, inner_w)
+                else:
+                    bp = Paragraph(body1, self.bstyle)
+                    _, bh = bp.wrap(inner_w, availHeight)
+                self._metrics.append((hh, bh, False, bh, 0, inner_w, list_mode))
 
             total_h += hh + self._INNER_GAP + bh
             if i < n - 1:
@@ -284,12 +338,13 @@ class _SectionsCard(Flowable):
         current_y = h - self.pad_tb
 
         for i, sec_data in enumerate(self.sections_data):
-            heading  = sec_data[0]
-            body1    = sec_data[1]
-            two_col  = sec_data[2] if len(sec_data) > 2 else False
-            body2    = sec_data[3] if len(sec_data) > 3 else ""
+            heading   = sec_data[0]
+            body1     = sec_data[1]
+            two_col   = sec_data[2] if len(sec_data) > 2 else False
+            body2     = sec_data[3] if len(sec_data) > 3 else ""
+            list_mode = sec_data[4] if len(sec_data) > 4 else False
 
-            hh, bh, _, bh1, bh2, avail_w = self._metrics[i]
+            hh, bh, _, bh1, bh2, avail_w, _ = self._metrics[i]
             capsule_r = hh / 2
 
             c.saveState()
@@ -305,18 +360,27 @@ class _SectionsCard(Flowable):
             current_y -= hh + self._INNER_GAP
 
             if two_col:
-                if body1:
-                    bp1 = Paragraph(body1, self.bstyle)
-                    bp1.wrap(avail_w, bh1 + 200)
-                    bp1.drawOn(c, self.pad_x, current_y - bh1)
-                if body2:
-                    bp2 = Paragraph(body2, self.bstyle)
-                    bp2.wrap(avail_w, bh2 + 200)
-                    bp2.drawOn(c, self.pad_x + avail_w + self._COL_GAP, current_y - bh2)
+                if list_mode:
+                    if body1:
+                        self._draw_list_body(c, body1.split('\n'), self.pad_x, current_y, avail_w)
+                    if body2:
+                        self._draw_list_body(c, body2.split('\n'), self.pad_x + avail_w + self._COL_GAP, current_y, avail_w)
+                else:
+                    if body1:
+                        bp1 = Paragraph(body1, self.bstyle)
+                        bp1.wrap(avail_w, bh1 + 200)
+                        bp1.drawOn(c, self.pad_x, current_y - bh1)
+                    if body2:
+                        bp2 = Paragraph(body2, self.bstyle)
+                        bp2.wrap(avail_w, bh2 + 200)
+                        bp2.drawOn(c, self.pad_x + avail_w + self._COL_GAP, current_y - bh2)
             else:
-                bp = Paragraph(body1, self.bstyle)
-                bp.wrap(avail_w, bh + 200)
-                bp.drawOn(c, self.pad_x, current_y - bh)
+                if list_mode:
+                    self._draw_list_body(c, body1.split('\n'), self.pad_x, current_y, avail_w)
+                else:
+                    bp = Paragraph(body1, self.bstyle)
+                    bp.wrap(avail_w, bh + 200)
+                    bp.drawOn(c, self.pad_x, current_y - bh)
 
             current_y -= bh
             if i < n - 1:
@@ -377,7 +441,8 @@ class _KeywordCard(Flowable):
         c.roundRect(badge_x, badge_y, bw, bh, self._BADGE_R, fill=1, stroke=0)
         c.setFont(FONT_BOLD, self._BADGE_FS)
         c.setFillColor(C_WHITE)
-        text_y = badge_y + (bh - self._BADGE_FS) / 2
+        # 光学的中央揃え：文字の視覚重心がem上寄りのため少し上にオフセット
+        text_y = badge_y + (bh - self._BADGE_FS) / 2 + self._BADGE_FS * 0.13
         c.drawString(badge_x + self._BADGE_PAD_X, text_y, "キーワード")
         c.restoreState()
 
@@ -521,7 +586,8 @@ class _PillFlowable(Flowable):
         c.saveState()
         c.setFont(self.style.fontName, self.style.fontSize)
         c.setFillColor(self.style.textColor)
-        text_y = (h - self.style.fontSize) / 2
+        # 光学的中央揃え：文字の視覚重心がem上寄りのため少し上にオフセット
+        text_y = (h - self.style.fontSize) / 2 + self.style.fontSize * 0.13
         c.drawString(self.pad_x, text_y, self.text)
         c.restoreState()
 
@@ -668,14 +734,22 @@ def _build_profile(block, styles, doc):
     for sec in sections:
         c1 = sec.get("content",  "").strip()
         c2 = sec.get("content2", "").strip()
-        two_col = bool(sec.get("twoCol", False))
+        two_col  = bool(sec.get("twoCol",    False))
+        list_mode = bool(sec.get("listMode", False))
         if not c1 and not c2:
             continue
+        if list_mode:
+            body1 = _protect_spaces(c1)
+            body2 = _protect_spaces(c2) if two_col else ""
+        else:
+            body1 = _fmt(c1)
+            body2 = _fmt(c2) if two_col else ""
         sec_pairs.append((
             sec.get("heading", ""),
-            _fmt(c1),
+            body1,
             two_col,
-            _fmt(c2) if two_col else "",
+            body2,
+            list_mode,
         ))
 
     left_body = []
