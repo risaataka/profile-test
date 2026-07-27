@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<!-- 開発用: 24階級の見た目をまとめて確認する。拡張機能の動作には不要。 -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>力士プレビュー</title>
+<style>
+  body { background: #f3efe7; font: 12px/1.4 sans-serif; margin: 16px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .cell { text-align: center; }
+  .cell .box { display: flex; align-items: flex-end; justify-content: center; }
+  .cell b { display: block; font-size: 11px; }
+  .cell span { font-size: 10px; color: #666; }
+</style>
+</head>
+<body>
+<div class="grid" id="grid"></div>
+<script src="../src/ranks.js"></script>
+<script src="../src/rikishi.js"></script>
+<script src="../src/styles.js"></script>
+<script>
+  const st = document.createElement('style');
+  st.textContent = SUMO_STYLES.character;
+  document.head.appendChild(st);
+
+  const size = (s) => Math.round(44 * Math.pow(240 / 44, (s - 1) / 23));
+  const pick = new URLSearchParams(location.search).get('stages');
+  const stages = pick ? pick.split(',').map(Number)
+                      : SUMO_RANKS.RANKS.map((r) => r.stage);
+
+  document.getElementById('grid').innerHTML = stages.map(function (s) {
+    const rank = SUMO_RANKS.RANKS[s - 1];
+    const px = size(s);
+    return '<div class="cell"><div class="box" style="width:' + px + 'px;height:' + px + 'px">' +
+      SUMO_RIKISHI.svg({ stage: s, rank: rank, animate: false }) +
+      '</div><b>' + s + ' ' + rank.name + '</b><span>' + rank.kani + ' ' + rank.color + '</span></div>';
+  }).join('');
+</script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<!--
+  開発用: chrome.* をその場で偽装して content script をそのまま動かす。
+  タブ数スライダーで昇進・降格・塩まきを確認できる。拡張機能の動作には不要。
+-->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>力士サンドボックス</title>
+<style>
+  body { font: 14px/1.7 system-ui, sans-serif; margin: 0; padding: 24px 32px;
+         background: #fff; color: #222; min-height: 200vh; }
+  .panel { position: fixed; right: 20px; top: 20px; background: #fff; border: 1px solid #ddd;
+           border-radius: 10px; padding: 14px 16px; z-index: 10; box-shadow: 0 4px 16px #0002; }
+  input[type=range] { width: 220px; }
+  code { background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>ダミーのページ</h1>
+<p>ここはコンテンツスクリプトの動作確認用のページです。右のパネルでタブ数を変えてください。</p>
+<p>タブ数 <code id="tc">1</code> ／ 階級 <code id="st">1</code> <code id="rn"></code></p>
+
+<div class="panel">
+  <label>タブ数 <input type="range" id="tabs" min="1" max="90" value="1"></label>
+  <div><button id="plus5">+5 タブ</button> <button id="minus5">-5 タブ</button>
+       <button id="max">一気に横綱</button></div>
+</div>
+
+<script>
+// ---- chrome.* の最小スタブ ----
+const listeners = [];
+window.chrome = {
+  runtime: { lastError: null, id: 'sandbox' },
+  storage: {
+    local: {
+      _d: {},
+      get(keys, cb) {
+        const out = {};
+        (Array.isArray(keys) ? keys : [keys]).forEach((k) => {
+          if (k in this._d) out[k] = this._d[k];
+        });
+        cb(out);
+      },
+      set(obj, cb) {
+        const ch = {};
+        Object.keys(obj).forEach((k) => {
+          ch[k] = { oldValue: this._d[k], newValue: obj[k] };
+          this._d[k] = obj[k];
+        });
+        listeners.forEach((f) => f(ch, 'local'));
+        if (cb) cb();
+      },
+      remove(k, cb) {
+        const ch = {}; ch[k] = { oldValue: this._d[k], newValue: undefined };
+        delete this._d[k];
+        listeners.forEach((f) => f(ch, 'local'));
+        if (cb) cb();
+      }
+    },
+    onChanged: { addListener(f) { listeners.push(f); } }
+  }
+};
+chrome.storage.local._d.sumoSettings = { enabled: true, position: 'top-left', salt: true };
+</script>
+<script src="../src/ranks.js"></script>
+<script src="../src/rikishi.js"></script>
+<script src="../src/styles.js"></script>
+<script src="../src/content.js"></script>
+<script>
+let count = 1;
+function push(nv) {
+  count = Math.max(1, nv);
+  const stage = SUMO_RANKS.stageForTabs(count);
+  chrome.storage.local.set({ sumoState: { tabCount: count, stage: stage } });
+  document.getElementById('tc').textContent = count;
+  document.getElementById('st').textContent = stage;
+  document.getElementById('rn').textContent = SUMO_RANKS.RANKS[stage - 1].name;
+  document.getElementById('tabs').value = Math.min(90, count);
+}
+document.getElementById('tabs').addEventListener('input', (e) => push(+e.target.value));
+document.getElementById('plus5').addEventListener('click', () => push(count + 5));
+document.getElementById('minus5').addEventListener('click', () => push(count - 5));
+document.getElementById('max').addEventListener('click', () => push(60));
+window.__sumoPush = push;
+setTimeout(() => push(1), 60);
+</script>
+</body>
+</html>

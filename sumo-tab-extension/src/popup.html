@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ちゃんこタブ力士</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; width: 290px;
+    font: 13px/1.6 "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", system-ui, sans-serif;
+    background: #16110f; color: #f4efe8;
+  }
+  header { display: flex; align-items: center; gap: 10px; padding: 12px 14px 8px; }
+  #preview { width: 66px; height: 66px; flex: none; }
+  .titles { min-width: 0; }
+  .rank-name { font-size: 17px; font-weight: 700; letter-spacing: .02em; }
+  .kani { font-size: 11px; opacity: .75; }
+  .kani i { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+            vertical-align: -1px; margin-right: 4px; box-shadow: 0 0 0 1px #ffffff66; }
+  .count { font-size: 11px; opacity: .6; margin-top: 2px; }
+
+  .gauge { margin: 4px 14px 10px; }
+  .bar { height: 6px; border-radius: 3px; background: #352924; overflow: hidden; }
+  .bar > i { display: block; height: 100%; border-radius: 3px; transition: width .3s; }
+  .hint { font-size: 11px; margin-top: 6px; opacity: .85; }
+  .hint b { color: #ffd76a; }
+
+  .banzuke { max-height: 168px; overflow-y: auto; border-top: 1px solid #2c231f;
+             border-bottom: 1px solid #2c231f; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 3px 14px; font-size: 11px; opacity: .55; }
+  .row.on { opacity: 1; background: #241b17; font-weight: 700; }
+  .row.done { opacity: .8; }
+  .row i { width: 10px; height: 10px; border-radius: 2px; flex: none; box-shadow: 0 0 0 1px #ffffff5c; }
+  .row .n { width: 18px; text-align: right; opacity: .6; }
+  .row .t { margin-left: auto; opacity: .6; font-variant-numeric: tabular-nums; }
+
+  footer { padding: 9px 14px 12px; display: grid; gap: 7px; }
+  label { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+  select { background: #241b17; color: inherit; border: 1px solid #3a2d27;
+           border-radius: 5px; padding: 2px 5px; font: inherit; margin-left: auto; }
+  .note { font-size: 10px; opacity: .45; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <header>
+    <div id="preview"></div>
+    <div class="titles">
+      <div class="rank-name" id="rankName">—</div>
+      <div class="kani" id="kani"></div>
+      <div class="count" id="count"></div>
+    </div>
+  </header>
+
+  <div class="gauge">
+    <div class="bar"><i id="bar"></i></div>
+    <div class="hint" id="hint"></div>
+  </div>
+
+  <div class="banzuke" id="banzuke"></div>
+
+  <footer>
+    <label><input type="checkbox" id="enabled"> 力士を表示する</label>
+    <label><input type="checkbox" id="salt"> 横綱の塩まき</label>
+    <label>すわる位置
+      <select id="position">
+        <option value="top-left">左上</option>
+        <option value="top-right">右上</option>
+        <option value="bottom-left">左下</option>
+        <option value="bottom-right">右下</option>
+      </select>
+    </label>
+    <div class="note">まわしの色は冠位十二階（徳・仁・礼・信・義・智）。24階級、横綱で塩をまきはじめます。</div>
+  </footer>
+
+  <script src="ranks.js"></script>
+  <script src="rikishi.js"></script>
+  <script src="styles.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
