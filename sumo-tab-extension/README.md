@@ -30,12 +30,20 @@
 
 正確な対応は [`src/ranks.js`](src/ranks.js) を参照（ツールバーのアイコンをクリックすると全24階級が一覧で出ます）。
 
-## インストール（開発者モード）
+## インストール
 
-1. Chrome で `chrome://extensions` を開く
-2. 右上の「デベロッパー モード」をオン
-3. 「パッケージ化されていない拡張機能を読み込む」→ この `sumo-tab-extension` フォルダを選択
-4. 適当なページを開き直すと、左上に力士が座ります
+配布用の zip を同梱しています → **[`dist/chanko-tab-rikishi-1.0.0.zip`](dist/chanko-tab-rikishi-1.0.0.zip)**
+（GitHub 上でこのファイルを開き、右上の「Download raw file」でダウンロードできます）
+
+1. zip をダウンロードして展開する（`chanko-tab-rikishi` フォルダができます）
+2. Chrome で `chrome://extensions` を開く
+3. 右上の「デベロッパー モード」をオン
+4. 「パッケージ化されていない拡張機能を読み込む」→ 展開した `chanko-tab-rikishi` フォルダを選択
+5. 適当なページを開き直すと、左上に力士が座ります
+
+リポジトリを clone している場合は、zip を使わず `sumo-tab-extension` フォルダをそのまま選んでも動きます。
+
+zip を作り直すときは `sh dev/pack.sh`（`dist/` に出力されます）。
 
 ## ツールバーのポップアップ
 
